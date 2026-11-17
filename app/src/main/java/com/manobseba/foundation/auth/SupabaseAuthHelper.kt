@@ -34,7 +34,9 @@ object SupabaseAuthHelper {
     fun anonKey(): String = BuildConfig.VITE_SUPABASE_ANON_KEY.trim()
 
     fun isConfigured(): Boolean =
-        baseUrl().startsWith("https://") && anonKey().isNotBlank()
+        baseUrl().startsWith("https://") &&
+            anonKey().isNotBlank() &&
+            !anonKey().endsWith("_PLACEHOLDER")
 
     suspend fun restoreSession(context: Context): AppUser? = withContext(Dispatchers.IO) {
         if (!isConfigured()) return@withContext null

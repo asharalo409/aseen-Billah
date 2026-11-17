@@ -43,14 +43,19 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
           if [ ! -f .env ]; then
-            if [ -z "$VITE_SUPABASE_URL" ] || [ -z "$VITE_SUPABASE_ANON_KEY" ]; then
+            CLEAN_URL="$(printf '%s' "$VITE_SUPABASE_URL" | tr -d ' \t\n\r')"
+            CLEAN_KEY="$(printf '%s' "$VITE_SUPABASE_ANON_KEY" | tr -d ' \t\n\r')"
+            if [ -z "$CLEAN_URL" ] || [ -z "$CLEAN_KEY" ]; then
               echo "::warning::VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY not set in GitHub Secrets; Live Vercel server mode will work, Native mode needs those secrets."
             fi
-            {
-              printf 'VITE_SUPABASE_URL=%s\n' "$VITE_SUPABASE_URL"
-              printf 'VITE_SUPABASE_ANON_KEY=%s\n' "$VITE_SUPABASE_ANON_KEY"
-            } > .env
-            echo "Generated .env for Secrets Gradle Plugin."
+            : > .env
+            if [ -n "$CLEAN_URL" ]; then
+              printf 'VITE_SUPABASE_URL=%s\n' "$CLEAN_URL" >> .env
+            fi
+            if [ -n "$CLEAN_KEY" ]; then
+              printf 'VITE_SUPABASE_ANON_KEY=%s\n' "$CLEAN_KEY" >> .env
+            fi
+            echo "Prepared .env for Secrets Gradle Plugin."
           fi
 
       - name: Prepare debug keystore
