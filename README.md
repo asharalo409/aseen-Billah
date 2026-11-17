@@ -16,10 +16,10 @@
   - কম্পাস সেন্সরসহ কিবলা দিকনির্ণায়ক, হ্যাপটিক তসবিহ, ৭ দিনের আমল চার্ট ও যাকাত ক্যালকুলেটর
   - ১১৪ সূরা ও ৬০৪ পৃষ্ঠার হাফেজী কুরআন ভিউয়ার এবং অফলাইন হাদিস বই ডাউনলোড
 - **লাইভ আবহাওয়া ও AQI:** Open-Meteo ভিত্তিক ২৪ ঘণ্টার তাপমাত্রা চার্ট, ৭ দিনের পূর্বাভাস ও বায়ুর মান।
-- **সদস্য, কমিটি, কমিউনিটি ও প্রশাসন:** Google সাইন-ইন, ৮টি ভূমিকা ও অনুমতি কাঠামো, ডিজিটাল আইডি কার্ড শেয়ার, ইভেন্ট RSVP, গোপন ব্যালট পোল, চ্যাট, থিম স্টুডিও এবং ৪-সংখ্যার পিন + বায়োমেট্রিক অ্যাপ লক।
+- **সদস্য, কমিটি, কমিউনিটি ও প্রশাসন:** Supabase ইমেইল ও পাসওয়ার্ড সাইন-ইন/রেজিস্ট্রেশন ও পাসওয়ার্ড রিসেট, ৮টি ভূমিকা ও অনুমতি কাঠামো, ডিজিটাল আইডি কার্ড শেয়ার, ইভেন্ট RSVP, গোপন ব্যালট পোল, চ্যাট, থিম স্টুডিও এবং ৪-সংখ্যার পিন + বায়োমেট্রিক অ্যাপ লক।
 
 ## প্রযুক্তি ও কনফিগারেশন
 - **UI:** Jetpack Compose (Material 3), Adaptive `WindowSizeClass`, `Noto Sans Bengali` ও `Plus Jakarta Sans` টাইপোগ্রাফি
-- **অথেনটিকেশন ও ডাটাবেস:** Google Sign-In (`CredentialManager`) + Firebase Authentication + Cloud Firestore (named database) ও শূন্য-ট্রাস্ট নিরাপত্তা বিধি (`firestore.rules`)
+- **অথেনটিকেশন ও ডাটাবেস:** Supabase Auth (GoTrue Email/Password) ও Supabase PostgREST ডাটাবেস (`VITE_SUPABASE_URL` এবং `VITE_SUPABASE_ANON_KEY` Secrets Gradle Plugin-এর মাধ্যমে `BuildConfig`-এ যুক্ত)
 - **AI ও নিরাপত্তা:** Firebase AI Logic (`gemini-3.8-flash`) + Firebase App Check (Debug & reCAPTCHA Enterprise)
-- **বিল্ড:** Gradle Kotlin DSL (`gradle :app:assembleDebug` / `compile_applet`)
+- **বিল্ড:** Gradle Kotlin DSL (`gradle :app:assembleDebug` / `compile_applet`) ও GitHub Actions APK বিল্ড ওয়ার্কফ্লো

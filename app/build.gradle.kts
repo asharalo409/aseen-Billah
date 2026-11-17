@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.google.services)
+    alias(libs.plugins.secrets)
 }
 
 android {
@@ -58,6 +59,11 @@ kotlin {
     jvmToolchain(21)
 }
 
+secrets {
+    propertiesFileName = ".env"
+    defaultPropertiesFileName = ".env.example"
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -80,15 +86,15 @@ dependencies {
     implementation(libs.kotlinx.coroutines.play.services)
 
     implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.firestore)
-    implementation(libs.firebase.auth)
+    // implementation(libs.firebase.firestore)
+    // implementation(libs.firebase.auth)
     implementation(libs.firebase.ai)
     implementation(libs.firebase.appcheck.recaptcha)
     implementation(libs.firebase.appcheck.debug)
 
-    implementation(libs.androidx.credentials)
-    implementation(libs.androidx.credentials.play.services)
-    implementation(libs.googleid)
+    // implementation(libs.androidx.credentials)
+    // implementation(libs.androidx.credentials.play.services)
+    // implementation(libs.googleid)
 
     implementation(libs.coil.compose)
 

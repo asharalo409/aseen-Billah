@@ -23,10 +23,15 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Backspace
+import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,8 +40,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,13 +66,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.manobseba.foundation.R
-import com.manobseba.foundation.auth.GoogleAuthHelper
-import com.manobseba.foundation.auth.GoogleSignInResult
+import com.manobseba.foundation.auth.AppUser
+import com.manobseba.foundation.auth.SupabaseAuthHelper
+import com.manobseba.foundation.auth.SupabaseAuthResult
 import com.manobseba.foundation.domain.PrayerCalculator
 import com.manobseba.foundation.security.AppLockManager
 import com.manobseba.foundation.ui.components.FoundationCard
@@ -72,14 +83,24 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun AuthScreen(
-    onSignedInSuccess: () -> Unit,
+    onSignedInSuccess: (AppUser) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var isRegisterMode by remember { mutableStateOf(false) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+    var fullName by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var joinCode by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var infoMsg by remember { mutableStateOf<String?>(null) }
+    var showForgotDialog by remember { mutableStateOf(false) }
     val palette = paletteForKey("green")
+    val isConfigured = remember { SupabaseAuthHelper.isConfigured() }
 
     Box(
         modifier = modifier
@@ -138,27 +159,102 @@ fun AuthScreen(
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(14.dp))
 
-                val features = listOf(
-                    "১০০% স্বচ্ছ আয়-ব্যয়, মাসিক চাঁদা ও তহবিল খাত",
-                    "মানবসেবা AI — বাংলা ভিশন খাতা রিডার ও সহকারী",
-                    "২৪ ঘণ্টার জরুরি রক্তের আবেদন, ত্রাণ মানচিত্র ও ইসলামিক কর্নার"
-                )
-                features.forEach { item ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(vertical = 4.dp)
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        selected = !isRegisterMode,
+                        onClick = { isRegisterMode = false; errorMsg = null; infoMsg = null },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                        modifier = Modifier.testTag("auth_tab_login")
+                    ) { Text("লগইন") }
+                    SegmentedButton(
+                        selected = isRegisterMode,
+                        onClick = { isRegisterMode = true; errorMsg = null; infoMsg = null },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                        modifier = Modifier.testTag("auth_tab_register")
+                    ) { Text("নতুন অ্যাকাউন্ট") }
+                }
+
+                Spacer(Modifier.height(14.dp))
+
+                if (!isConfigured) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.VerifiedUser,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
+                        Text(
+                            text = "Supabase সিক্রেট কী (VITE_SUPABASE_URL ও VITE_SUPABASE_ANON_KEY) কনফিগার করা নেই। Secrets প্যানেলে যোগ করে পুনরায় বিল্ড করুন।",
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(12.dp)
                         )
-                        Spacer(Modifier.width(8.dp))
-                        Text(item, style = MaterialTheme.typography.bodySmall)
                     }
+                }
+
+                if (isRegisterMode) {
+                    OutlinedTextField(
+                        value = fullName,
+                        onValueChange = { fullName = it },
+                        label = { Text("পূর্ণ নাম *") },
+                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("register_name_input")
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = phone,
+                        onValueChange = { phone = it },
+                        label = { Text("মোবাইল নম্বর") },
+                        leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("register_phone_input")
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = { email = it },
+                    label = { Text("জিমেইল / ইমেইল *") },
+                    leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("email_input")
+                )
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("পাসওয়ার্ড *") },
+                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                    trailingIcon = {
+                        IconButton(onClick = { showPassword = !showPassword }) {
+                            Icon(
+                                imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (showPassword) "পাসওয়ার্ড লুকান" else "পাসওয়ার্ড দেখুন"
+                            )
+                        }
+                    },
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("password_input")
+                )
+
+                if (isRegisterMode) {
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = joinCode,
+                        onValueChange = { joinCode = it },
+                        label = { Text("রেজিস্ট্রেশন কোড (প্রযোজ্য হলে)") },
+                        leadingIcon = { Icon(Icons.Default.VpnKey, contentDescription = null) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("register_code_input")
+                    )
                 }
 
                 if (!errorMsg.isNullOrBlank()) {
@@ -177,17 +273,50 @@ fun AuthScreen(
                     }
                 }
 
-                Spacer(Modifier.height(20.dp))
+                if (!infoMsg.isNullOrBlank()) {
+                    Spacer(Modifier.height(12.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = infoMsg!!,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = {
                         if (busy) return@Button
+                        if (email.isBlank() || password.isBlank()) {
+                            errorMsg = "অনুগ্রহ করে ইমেইল ও পাসওয়ার্ড লিখুন।"
+                            return@Button
+                        }
+                        if (isRegisterMode && fullName.isBlank()) {
+                            errorMsg = "অনুগ্রহ করে আপনার পূর্ণ নাম লিখুন।"
+                            return@Button
+                        }
                         busy = true
                         errorMsg = null
+                        infoMsg = null
                         scope.launch {
-                            when (val res = GoogleAuthHelper.signInWithGoogle(context)) {
-                                is GoogleSignInResult.Success -> onSignedInSuccess()
-                                is GoogleSignInResult.Cancelled -> errorMsg = "সাইন-ইন বাতিল করা হয়েছে।"
-                                is GoogleSignInResult.Error -> errorMsg = res.message
+                            val res = if (isRegisterMode) {
+                                SupabaseAuthHelper.signUpWithEmail(context, email, password, fullName, phone, joinCode)
+                            } else {
+                                SupabaseAuthHelper.signInWithEmail(context, email, password)
+                            }
+                            when (res) {
+                                is SupabaseAuthResult.Success -> onSignedInSuccess(res.user)
+                                is SupabaseAuthResult.VerificationRequired -> {
+                                    infoMsg = res.message
+                                    isRegisterMode = false
+                                }
+                                is SupabaseAuthResult.Error -> errorMsg = res.message
                             }
                             busy = false
                         }
@@ -196,7 +325,7 @@ fun AuthScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp)
-                        .testTag("google_sign_in_button"),
+                        .testTag("login_submit_button"),
                     shape = RoundedCornerShape(14.dp)
                 ) {
                     if (busy) {
@@ -206,15 +335,65 @@ fun AuthScreen(
                             strokeWidth = 2.dp
                         )
                         Spacer(Modifier.width(10.dp))
-                        Text("সাইন-ইন হচ্ছে...")
+                        Text(if (isRegisterMode) "নিবন্ধন হচ্ছে..." else "লগইন হচ্ছে...")
                     } else {
-                        Icon(Icons.Default.Shield, contentDescription = null)
-                        Spacer(Modifier.width(10.dp))
-                        Text(stringResource(R.string.sign_in_google_button))
+                        Text(if (isRegisterMode) "নতুন অ্যাকাউন্ট তৈরি করুন" else "ইমেইল দিয়ে লগইন করুন")
+                    }
+                }
+
+                if (!isRegisterMode) {
+                    Spacer(Modifier.height(6.dp))
+                    TextButton(
+                        onClick = { showForgotDialog = true },
+                        modifier = Modifier.align(Alignment.End).testTag("forgot_password_button")
+                    ) {
+                        Text("পাসওয়ার্ড ভুলে গেছেন?")
                     }
                 }
             }
         }
+    }
+
+    if (showForgotDialog) {
+        var resetEmail by remember { mutableStateOf(email) }
+        var sending by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { if (!sending) showForgotDialog = false },
+            title = { Text("পাসওয়ার্ড রিসেট করুন") },
+            text = {
+                OutlinedTextField(
+                    value = resetEmail,
+                    onValueChange = { resetEmail = it },
+                    label = { Text("আপনার অ্যাকাউন্ট ইমেইল") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    enabled = !sending && resetEmail.isNotBlank(),
+                    onClick = {
+                        sending = true
+                        scope.launch {
+                            SupabaseAuthHelper.sendPasswordReset(resetEmail)
+                                .onSuccess {
+                                    infoMsg = "পাসওয়ার্ড রিসেট লিংক আপনার ইমেইলে পাঠানো হয়েছে।"
+                                    showForgotDialog = false
+                                }
+                                .onFailure {
+                                    errorMsg = it.localizedMessage ?: "রিসেট লিংক পাঠানো যায়নি।"
+                                    showForgotDialog = false
+                                }
+                            sending = false
+                        }
+                    }
+                ) { Text("লিংক পাঠান") }
+            },
+            dismissButton = {
+                TextButton(enabled = !sending, onClick = { showForgotDialog = false }) { Text("বাতিল") }
+            }
+        )
     }
 }
 

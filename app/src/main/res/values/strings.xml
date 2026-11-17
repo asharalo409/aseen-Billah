@@ -3,8 +3,8 @@
     <string name="app_name">মানবসেবা ফাউন্ডেশন</string>
     <string name="app_slogan">মানুষের পাশে, মানবতার পাশে</string>
     <string name="sign_in_title">মানবসেবা ফাউন্ডেশনে স্বাগতম</string>
-    <string name="sign_in_subtitle">স্বচ্ছ হিসাব, জরুরি রক্তের আবেদন, ত্রাণ ও মানবসেবা AI ব্যবহার করতে Google দিয়ে সাইন-ইন করুন।</string>
-    <string name="sign_in_google_button">Google দিয়ে সাইন-ইন করুন</string>
+    <string name="sign_in_subtitle">স্বচ্ছ হিসাব, জরুরি রক্তের আবেদন, ত্রাণ ও মানবসেবা AI ব্যবহার করতে আপনার ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন।</string>
+    <string name="sign_in_google_button">ইমেইল দিয়ে লগইন করুন</string>
     <string name="sign_out_button">লগআউট</string>
     <string name="nav_home">হোম</string>
     <string name="nav_overview">ড্যাশবোর্ড</string>

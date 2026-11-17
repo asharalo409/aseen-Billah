@@ -61,7 +61,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.manobseba.foundation.R
-import com.manobseba.foundation.auth.GoogleAuthHelper
 import com.manobseba.foundation.data.SeedCatalog
 import com.manobseba.foundation.data.model.Member
 import com.manobseba.foundation.domain.PrayerCalculator
@@ -318,10 +317,8 @@ fun MyDashboardScreen(
         item {
             FilledTonalButton(
                 onClick = {
-                    scope.launch {
-                        GoogleAuthHelper.signOut(context)
-                        onSignedOut()
-                    }
+                    vm.signOut()
+                    onSignedOut()
                 },
                 colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.errorContainer, contentColor = MaterialTheme.colorScheme.onErrorContainer),
                 modifier = Modifier.fillMaxWidth().testTag("sign_out_button")

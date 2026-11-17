@@ -104,7 +104,7 @@ fun ManobsebaApp(
                     }
                 }
                 is AuthUiState.SignedOut -> {
-                    AuthScreen(onSignedInSuccess = { })
+                    AuthScreen(onSignedInSuccess = { user -> vm.onSignedIn(user) })
                 }
                 is AuthUiState.SignedIn -> {
                     AuthenticatedShell(

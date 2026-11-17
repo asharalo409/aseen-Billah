@@ -5,8 +5,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseUser
+import com.manobseba.foundation.auth.AppUser
+import com.manobseba.foundation.auth.SupabaseAuthHelper
 import com.manobseba.foundation.data.DistrictsData
 import com.manobseba.foundation.data.SeedCatalog
 import com.manobseba.foundation.data.model.AiChatMessage
@@ -58,7 +58,7 @@ import java.time.YearMonth
 sealed interface AuthUiState {
     data object Loading : AuthUiState
     data object SignedOut : AuthUiState
-    data class SignedIn(val user: FirebaseUser) : AuthUiState
+    data class SignedIn(val user: AppUser) : AuthUiState
 }
 
 sealed interface AiTaskState<out T> {
@@ -84,11 +84,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val lockManager = AppLockManager(app)
     private val localPrefs = app.getSharedPreferences("manobseba_local", Context.MODE_PRIVATE)
 
-    private val auth = FirebaseAuth.getInstance()
+    private var currentAppUser: AppUser? = null
 
-    private val _authState = MutableStateFlow<AuthUiState>(
-        auth.currentUser?.let { AuthUiState.SignedIn(it) } ?: AuthUiState.SignedOut
-    )
+    private val _authState = MutableStateFlow<AuthUiState>(AuthUiState.Loading)
     val authState: StateFlow<AuthUiState> = _authState.asStateFlow()
 
     private val _toastMessage = MutableStateFlow<String?>(null)
@@ -230,27 +228,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var listenerJobs = mutableListOf<Job>()
     private var aiMsgJob: Job? = null
 
-    private val authListener = FirebaseAuth.AuthStateListener { firebaseAuth ->
-        val user = firebaseAuth.currentUser
-        if (user == null) {
-            cancelListeners()
-            _authState.value = AuthUiState.SignedOut
-        } else {
-            _authState.value = AuthUiState.SignedIn(user)
-            startAuthenticatedSync(user)
-        }
-    }
-
     init {
-        auth.addAuthStateListener(authListener)
-        auth.currentUser?.let { startAuthenticatedSync(it) }
         val loc = DistrictsData.findByName(_selectedDistrict.value)
         _weather.value = extClient.getCachedWeather(loc.lat, loc.lng)
         refreshWeather(force = false)
+        viewModelScope.launch {
+            val restored = SupabaseAuthHelper.restoreSession(getApplication())
+            if (restored != null) {
+                onSignedIn(restored)
+            } else {
+                _authState.value = AuthUiState.SignedOut
+            }
+        }
     }
 
     override fun onCleared() {
-        auth.removeAuthStateListener(authListener)
         cancelListeners()
         super.onCleared()
     }
@@ -262,10 +254,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         aiMsgJob = null
     }
 
-    private fun startAuthenticatedSync(user: FirebaseUser) {
+    fun onSignedIn(user: AppUser) {
+        currentAppUser = user
+        _authState.value = AuthUiState.SignedIn(user)
+        startAuthenticatedSync(user)
+    }
+
+    fun signOut() {
+        viewModelScope.launch {
+            cancelListeners()
+            SupabaseAuthHelper.signOut(getApplication())
+            repo.clearAll()
+            currentAppUser = null
+            _authState.value = AuthUiState.SignedOut
+        }
+    }
+
+    fun refreshAll() {
+        val user = currentAppUser ?: return
+        viewModelScope.launch {
+            repo.syncAll(user)
+                .onFailure { showToast("ডেটা সিঙ্ক সতর্কতা: ${it.localizedMessage ?: "পুনরায় চেষ্টা করুন"}") }
+        }
+    }
+
+    private fun startAuthenticatedSync(user: AppUser) {
         cancelListeners()
         viewModelScope.launch {
-            repo.ensureUserProfileAndStarterSeed(user)
+            repo.syncAll(user)
                 .onFailure { showToast("ডাটাবেস সিঙ্ক সতর্কতা: ${it.localizedMessage ?: "পুনরায় চেষ্টা করুন"}") }
         }
         val uid = user.uid
@@ -297,19 +313,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun currentUser(): FirebaseUser? = auth.currentUser
+    fun currentUser(): AppUser? = currentAppUser
 
-    fun currentUserId(): String = auth.currentUser?.uid.orEmpty()
+    fun currentUserId(): String = currentAppUser?.uid.orEmpty()
 
     fun currentDisplayName(): String =
         _userProfile.value?.displayName?.takeIf { it.isNotBlank() }
-            ?: auth.currentUser?.displayName?.takeIf { it.isNotBlank() }
+            ?: currentAppUser?.displayName?.takeIf { it.isNotBlank() }
             ?: "সদস্য"
 
     fun currentRole(): String {
-        val u = auth.currentUser
-        if (u != null && u.isEmailVerified && u.email == SeedCatalog.BOOTSTRAP_ADMIN_EMAIL) return "admin"
-        return _userProfile.value?.role ?: "member"
+        val u = currentAppUser
+        if (u != null && u.email.equals(SeedCatalog.BOOTSTRAP_ADMIN_EMAIL, ignoreCase = true)) return "admin"
+        return _userProfile.value?.role ?: u?.role ?: "member"
     }
 
     fun isCurrentUserAdmin(): Boolean = currentRole() == "admin"

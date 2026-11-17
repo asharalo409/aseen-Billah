@@ -1,15 +1,9 @@
 package com.manobseba.foundation.data.remote
 
 import android.content.Context
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseUser
-import com.google.firebase.firestore.DocumentSnapshot
-import com.google.firebase.firestore.FieldValue
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.MetadataChanges
-import com.google.firebase.firestore.Query
-import com.google.firebase.firestore.snapshots
-import com.manobseba.foundation.R
+import android.util.Log
+import com.manobseba.foundation.auth.AppUser
+import com.manobseba.foundation.auth.SupabaseAuthHelper
 import com.manobseba.foundation.data.SeedCatalog
 import com.manobseba.foundation.data.model.AiChatMessage
 import com.manobseba.foundation.data.model.AiChatSession
@@ -24,7 +18,6 @@ import com.manobseba.foundation.data.model.Fund
 import com.manobseba.foundation.data.model.Member
 import com.manobseba.foundation.data.model.Notice
 import com.manobseba.foundation.data.model.Poll
-import com.manobseba.foundation.data.model.PollVote
 import com.manobseba.foundation.data.model.Project
 import com.manobseba.foundation.data.model.PublicRequest
 import com.manobseba.foundation.data.model.ReliefLocation
@@ -33,472 +26,706 @@ import com.manobseba.foundation.data.model.UserProfile
 import com.manobseba.foundation.data.model.VoiceTestimonial
 import com.manobseba.foundation.data.model.VolunteerDuty
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
-class FoundationRepository(
-    private val db: FirebaseFirestore,
-    private val auth: FirebaseAuth = FirebaseAuth.getInstance()
-) {
-    constructor(context: Context) : this(
-        db = FirebaseFirestore.getInstance(context.applicationContext.getString(R.string.firestore_database_id))
-    )
+private const val TAG = "SupabaseRepo"
+private const val PREF_LOCAL_STORE = "manobseba_user_local_sync"
 
-    private inline fun <reified T> observeFoundationCollection(collection: String): Flow<List<T>> {
-        if (auth.currentUser == null) return flowOf(emptyList())
-        return db.collection(collection)
-            .whereEqualTo("visibility", "foundation")
-            .snapshots(MetadataChanges.INCLUDE)
-            .map { snap ->
-                snap.documents.mapNotNull { doc ->
-                    doc.toObject(T::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                }
-            }
-            .catch { e ->
-                if (e is CancellationException) throw e
-                handleFirestoreError(e, OperationType.LIST, collection)
-            }
+class FoundationRepository(context: Context) {
+    private val appContext = context.applicationContext
+    private val localPrefs = appContext.getSharedPreferences(PREF_LOCAL_STORE, Context.MODE_PRIVATE)
+
+    private val _userProfile = MutableStateFlow<UserProfile?>(null)
+    private val _settings = MutableStateFlow<FoundationSettings?>(null)
+    private val _members = MutableStateFlow<List<Member>>(emptyList())
+    private val _funds = MutableStateFlow<List<Fund>>(emptyList())
+    private val _transactions = MutableStateFlow<List<FoundationTransaction>>(emptyList())
+    private val _projects = MutableStateFlow<List<Project>>(emptyList())
+    private val _bloodRequests = MutableStateFlow<List<BloodRequest>>(emptyList())
+    private val _bloodDonors = MutableStateFlow<List<BloodDonor>>(emptyList())
+    private val _reliefLocations = MutableStateFlow<List<ReliefLocation>>(emptyList())
+    private val _fieldReports = MutableStateFlow<List<FieldReport>>(emptyList())
+    private val _events = MutableStateFlow<List<FoundationEvent>>(emptyList())
+    private val _notices = MutableStateFlow<List<Notice>>(emptyList())
+    private val _polls = MutableStateFlow<List<Poll>>(emptyList())
+    private val _voices = MutableStateFlow<List<VoiceTestimonial>>(emptyList())
+    private val _chatMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    private val _duties = MutableStateFlow<List<VolunteerDuty>>(emptyList())
+    private val _publicRequests = MutableStateFlow<List<PublicRequest>>(emptyList())
+    private val _salatLogs = MutableStateFlow<List<SalatAmolLog>>(emptyList())
+    private val _aiSessions = MutableStateFlow<List<AiChatSession>>(emptyList())
+    private val _aiMessagesByChat = MutableStateFlow<Map<String, List<AiChatMessage>>>(emptyMap())
+
+    fun observeSettings(): Flow<FoundationSettings?> = _settings
+    fun observeMembers(): Flow<List<Member>> = _members.map { list ->
+        list.sortedWith(compareBy({ it.rank ?: 100 }, { it.memberCode }))
+    }
+    fun observeFunds(): Flow<List<Fund>> = _funds
+    fun observeTransactions(): Flow<List<FoundationTransaction>> = _transactions.map { list ->
+        list.sortedByDescending { it.dateStr }
+    }
+    fun observeProjects(): Flow<List<Project>> = _projects
+    fun observeBloodRequests(): Flow<List<BloodRequest>> = _bloodRequests.map { list ->
+        list.sortedByDescending { it.createdAtIso.orEmpty() }
+    }
+    fun observeBloodDonors(): Flow<List<BloodDonor>> = _bloodDonors
+    fun observeReliefLocations(): Flow<List<ReliefLocation>> = _reliefLocations
+    fun observeFieldReports(): Flow<List<FieldReport>> = _fieldReports.map { list ->
+        list.sortedByDescending { it.createdAtIso.orEmpty() }
+    }
+    fun observeEvents(): Flow<List<FoundationEvent>> = _events.map { list ->
+        list.sortedBy { it.eventDateMillis }
+    }
+    fun observeNotices(): Flow<List<Notice>> = _notices.map { list ->
+        list.sortedByDescending { it.createdAtIso.orEmpty() }
+    }
+    fun observePolls(): Flow<List<Poll>> = _polls.map { list ->
+        list.sortedByDescending { it.createdAtIso.orEmpty() }
+    }
+    fun observeVoices(): Flow<List<VoiceTestimonial>> = _voices.map { list ->
+        list.sortedByDescending { it.createdAtIso.orEmpty() }
+    }
+    fun observeChatMessages(): Flow<List<ChatMessage>> = _chatMessages
+    fun observeDuties(): Flow<List<VolunteerDuty>> = _duties
+    fun observePublicRequests(user: AppUser?): Flow<List<PublicRequest>> = _publicRequests
+    fun observeUserProfile(uid: String?): Flow<UserProfile?> = _userProfile
+    fun observeSalatAmolLogs(uid: String?): Flow<List<SalatAmolLog>> = _salatLogs
+    fun observeAiSessions(uid: String?): Flow<List<AiChatSession>> = _aiSessions
+    fun observeAiMessages(uid: String?, chatId: String?): Flow<List<AiChatMessage>> =
+        _aiMessagesByChat.map { map -> if (chatId.isNullOrBlank()) emptyList() else map[chatId].orEmpty() }
+
+    fun clearAll() {
+        _userProfile.value = null
+        _settings.value = null
+        _members.value = emptyList()
+        _funds.value = emptyList()
+        _transactions.value = emptyList()
+        _projects.value = emptyList()
+        _bloodRequests.value = emptyList()
+        _bloodDonors.value = emptyList()
+        _reliefLocations.value = emptyList()
+        _fieldReports.value = emptyList()
+        _events.value = emptyList()
+        _notices.value = emptyList()
+        _polls.value = emptyList()
+        _voices.value = emptyList()
+        _chatMessages.value = emptyList()
+        _duties.value = emptyList()
+        _publicRequests.value = emptyList()
+        _salatLogs.value = emptyList()
+        _aiSessions.value = emptyList()
+        _aiMessagesByChat.value = emptyMap()
     }
 
-    fun observeSettings(): Flow<FoundationSettings?> =
-        observeFoundationCollection<FoundationSettings>("foundation_settings")
-            .map { it.firstOrNull() }
-
-    fun observeMembers(): Flow<List<Member>> = observeFoundationCollection<Member>("members")
-        .map { list -> list.sortedWith(compareBy({ it.rank ?: 100 }, { it.memberCode })) }
-
-    fun observeFunds(): Flow<List<Fund>> = observeFoundationCollection<Fund>("funds")
-
-    fun observeTransactions(): Flow<List<FoundationTransaction>> =
-        observeFoundationCollection<FoundationTransaction>("transactions")
-            .map { list -> list.sortedByDescending { it.dateStr } }
-
-    fun observeProjects(): Flow<List<Project>> = observeFoundationCollection<Project>("projects")
-
-    fun observeBloodRequests(): Flow<List<BloodRequest>> =
-        observeFoundationCollection<BloodRequest>("blood_requests")
-            .map { list -> list.sortedByDescending { it.createdAt?.seconds ?: 0L } }
-
-    fun observeBloodDonors(): Flow<List<BloodDonor>> =
-        observeFoundationCollection<BloodDonor>("blood_donors")
-
-    fun observeReliefLocations(): Flow<List<ReliefLocation>> =
-        observeFoundationCollection<ReliefLocation>("relief_locations")
-
-    fun observeFieldReports(): Flow<List<FieldReport>> =
-        observeFoundationCollection<FieldReport>("field_reports")
-            .map { list -> list.sortedByDescending { it.createdAt?.seconds ?: 0L } }
-
-    fun observeEvents(): Flow<List<FoundationEvent>> =
-        observeFoundationCollection<FoundationEvent>("events")
-            .map { list -> list.sortedBy { it.eventDateMillis } }
-
-    fun observeNotices(): Flow<List<Notice>> =
-        observeFoundationCollection<Notice>("notices")
-            .map { list -> list.sortedByDescending { it.createdAt?.seconds ?: 0L } }
-
-    fun observePolls(): Flow<List<Poll>> =
-        observeFoundationCollection<Poll>("polls")
-            .map { list -> list.sortedByDescending { it.createdAt?.seconds ?: 0L } }
-
-    fun observeVoices(): Flow<List<VoiceTestimonial>> =
-        observeFoundationCollection<VoiceTestimonial>("voices")
-            .map { list -> list.sortedByDescending { it.createdAt?.seconds ?: 0L } }
-
-    fun observeChatMessages(): Flow<List<ChatMessage>> =
-        observeFoundationCollection<ChatMessage>("chat_messages")
-            .map { list -> list.sortedBy { it.createdAt?.seconds ?: Long.MAX_VALUE } }
-
-    fun observeDuties(): Flow<List<VolunteerDuty>> =
-        observeFoundationCollection<VolunteerDuty>("duties")
-
-    fun observePublicRequests(user: FirebaseUser?): Flow<List<PublicRequest>> {
-        if (user == null) return flowOf(emptyList())
-        val isBootstrapAdmin = user.isEmailVerified && user.email == SeedCatalog.BOOTSTRAP_ADMIN_EMAIL
-        val query: Query = if (isBootstrapAdmin) {
-            db.collection("public_requests")
-        } else {
-            db.collection("public_requests").whereEqualTo("userId", user.uid)
+    suspend fun syncAll(user: AppUser): Result<Unit> = withContext(Dispatchers.IO) {
+        if (!SupabaseAuthHelper.isConfigured()) {
+            return@withContext Result.failure(IllegalStateException("Supabase কনফিগার করা হয়নি"))
         }
-        return query.snapshots(MetadataChanges.INCLUDE)
-            .map { snap ->
-                snap.documents.mapNotNull { doc ->
-                    doc.toObject(PublicRequest::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                }.sortedByDescending { it.createdAt?.seconds ?: 0L }
-            }
-            .catch { e ->
-                if (e is CancellationException) throw e
-                handleFirestoreError(e, OperationType.LIST, "public_requests")
-            }
-    }
-
-    fun observeUserProfile(uid: String?): Flow<UserProfile?> {
-        if (uid.isNullOrBlank()) return flowOf(null)
-        return db.collection("users").document(uid)
-            .snapshots(MetadataChanges.INCLUDE)
-            .map { doc -> doc.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE) }
-            .catch { e ->
-                if (e is CancellationException) throw e
-                handleFirestoreError(e, OperationType.GET, "users/$uid")
-            }
-    }
-
-    fun observeSalatAmolLogs(uid: String?): Flow<List<SalatAmolLog>> {
-        if (uid.isNullOrBlank()) return flowOf(emptyList())
-        return db.collection("users").document(uid).collection("salat_amol")
-            .snapshots(MetadataChanges.INCLUDE)
-            .map { snap ->
-                snap.documents.mapNotNull { doc ->
-                    doc.toObject(SalatAmolLog::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                }
-            }
-            .catch { e ->
-                if (e is CancellationException) throw e
-                handleFirestoreError(e, OperationType.LIST, "users/$uid/salat_amol")
-            }
-    }
-
-    fun observeAiSessions(uid: String?): Flow<List<AiChatSession>> {
-        if (uid.isNullOrBlank()) return flowOf(emptyList())
-        return db.collection("users").document(uid).collection("ai_chats")
-            .snapshots(MetadataChanges.INCLUDE)
-            .map { snap ->
-                snap.documents.mapNotNull { doc ->
-                    doc.toObject(AiChatSession::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                }.sortedByDescending { it.updatedAt?.seconds ?: 0L }
-            }
-            .catch { e ->
-                if (e is CancellationException) throw e
-                handleFirestoreError(e, OperationType.LIST, "users/$uid/ai_chats")
-            }
-    }
-
-    fun observeAiMessages(uid: String?, chatId: String?): Flow<List<AiChatMessage>> {
-        if (uid.isNullOrBlank() || chatId.isNullOrBlank()) return flowOf(emptyList())
-        return db.collection("users").document(uid).collection("ai_chats").document(chatId).collection("messages")
-            .snapshots(MetadataChanges.INCLUDE)
-            .map { snap ->
-                snap.documents.mapNotNull { doc ->
-                    doc.toObject(AiChatMessage::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                }.sortedBy { it.createdAt?.seconds ?: Long.MAX_VALUE }
-            }
-            .catch { e ->
-                if (e is CancellationException) throw e
-                handleFirestoreError(e, OperationType.LIST, "users/$uid/ai_chats/$chatId/messages")
-            }
-    }
-
-    suspend fun ensureUserProfileAndStarterSeed(user: FirebaseUser): Result<Unit> = runCatchingSafe {
         val uid = user.uid
-        val userRef = db.collection("users").document(uid)
-        val snap = userRef.get().await()
-        if (!snap.exists()) {
-            val isBootstrap = user.isEmailVerified && user.email == SeedCatalog.BOOTSTRAP_ADMIN_EMAIL
-            val profile = UserProfile(
-                userId = uid,
-                displayName = user.displayName?.takeIf { it.isNotBlank() } ?: user.email?.substringBefore("@") ?: "সদস্য",
-                email = user.email,
-                role = if (isBootstrap) "admin" else "member",
-                themePalette = "green",
-                themeBg = "plain",
-                darkMode = false
-            )
-            userRef.set(profile.toCreateMap()).await()
-        }
+        val localThemePalette = localPrefs.getString("theme_palette_$uid", "green") ?: "green"
+        val localThemeBg = localPrefs.getString("theme_bg_$uid", "plain") ?: "plain"
+        val localDarkMode = localPrefs.getBoolean("theme_dark_$uid", false)
 
-        val hasFunds = !db.collection("funds").whereEqualTo("visibility", "foundation").limit(1).get().await().isEmpty
-        if (!hasFunds) {
-            seedStarterData(uid)
+        val remoteProfiles = fetchTableFirst(listOf("profiles", "users"), "id=eq.$uid") {
+            SupabaseJsonMapper.toUserProfile(it)
         }
-    }
+        val remoteProfile = remoteProfiles.firstOrNull()
+        _userProfile.value = remoteProfile?.copy(
+            themePalette = remoteProfile.themePalette ?: localThemePalette,
+            themeBg = remoteProfile.themeBg ?: localThemeBg,
+            darkMode = remoteProfile.darkMode ?: localDarkMode
+        ) ?: UserProfile(
+            id = uid,
+            userId = uid,
+            displayName = user.displayName ?: user.email?.substringBefore("@") ?: "সদস্য",
+            email = user.email,
+            role = user.role,
+            themePalette = localThemePalette,
+            themeBg = localThemeBg,
+            darkMode = localDarkMode
+        )
 
-    private suspend fun seedStarterData(uid: String) {
-        val batch = db.batch()
-        batch.set(db.collection("foundation_settings").document("main"), SeedCatalog.defaultSettings(uid).toCreateMap())
-        SeedCatalog.seedFunds(uid).forEach { batch.set(db.collection("funds").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedMembers(uid).forEach { batch.set(db.collection("members").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedProjects(uid).forEach { batch.set(db.collection("projects").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedTransactions(uid).forEach { batch.set(db.collection("transactions").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedReliefLocations(uid).forEach { batch.set(db.collection("relief_locations").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedFieldReports(uid).forEach { batch.set(db.collection("field_reports").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedNotices(uid).forEach { batch.set(db.collection("notices").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedBloodRequests(uid).forEach { batch.set(db.collection("blood_requests").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedBloodDonors(uid).forEach { batch.set(db.collection("blood_donors").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedEvents(uid).forEach { batch.set(db.collection("events").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedPolls(uid).forEach { batch.set(db.collection("polls").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedVoices(uid).forEach { batch.set(db.collection("voices").document(it.id), it.toCreateMap()) }
-        SeedCatalog.seedDuties(uid).forEach { batch.set(db.collection("duties").document(it.id), it.toCreateMap()) }
-        batch.commit().await()
+        _settings.value = fetchTableFirst(listOf("settings", "foundation_settings")) {
+            SupabaseJsonMapper.toSettings(it)
+        }.firstOrNull() ?: SeedCatalog.defaultSettings(uid)
+
+        _members.value = fetchTableFirst(listOf("members")) { SupabaseJsonMapper.toMember(it) }
+        _funds.value = fetchTableFirst(listOf("funds", "fund_groups")) { SupabaseJsonMapper.toFund(it) }
+        _transactions.value = fetchTableFirst(listOf("transactions", "ledger")) { SupabaseJsonMapper.toTransaction(it) }
+        _projects.value = fetchTableFirst(listOf("projects")) { SupabaseJsonMapper.toProject(it) }
+        _bloodRequests.value = fetchTableFirst(listOf("blood_requests")) { SupabaseJsonMapper.toBloodRequest(it) }
+        _bloodDonors.value = fetchTableFirst(listOf("blood_donors")) { SupabaseJsonMapper.toBloodDonor(it) }
+        _reliefLocations.value = fetchTableFirst(listOf("relief_locations", "relief_map")) { SupabaseJsonMapper.toReliefLocation(it) }
+        _fieldReports.value = fetchTableFirst(listOf("field_reports", "works")) { SupabaseJsonMapper.toFieldReport(it) }
+        _events.value = fetchTableFirst(listOf("events")) { SupabaseJsonMapper.toEvent(it) }
+        _notices.value = fetchTableFirst(listOf("notices", "board_notices")) { SupabaseJsonMapper.toNotice(it) }
+        _polls.value = fetchTableFirst(listOf("polls")) { SupabaseJsonMapper.toPoll(it) }
+        _voices.value = fetchTableFirst(listOf("voices")) { SupabaseJsonMapper.toVoice(it) }
+        _chatMessages.value = fetchTableFirst(listOf("chat_messages")) { SupabaseJsonMapper.toChatMessage(it) }
+        _duties.value = fetchTableFirst(listOf("duties", "volunteers")) { SupabaseJsonMapper.toDuty(it) }
+        _publicRequests.value = fetchTableFirst(listOf("public_requests")) { SupabaseJsonMapper.toPublicRequest(it) }
+
+        val remoteSalat = fetchTableFirst(listOf("salat_amol"), "user_id=eq.$uid") {
+            SupabaseJsonMapper.toSalatAmolLog(it)
+        }
+        _salatLogs.value = if (remoteSalat.isNotEmpty()) remoteSalat else loadLocalSalatLogs(uid)
+
+        val remoteSessions = fetchTableFirst(listOf("ai_chats"), "user_id=eq.$uid") {
+            SupabaseJsonMapper.toAiSession(it)
+        }
+        _aiSessions.value = if (remoteSessions.isNotEmpty()) remoteSessions else loadLocalAiSessions(uid)
+        Result.success(Unit)
     }
 
     suspend fun updateUserTheme(uid: String, palette: String, bg: String, darkMode: Boolean): Result<Unit> = runCatchingSafe {
-        db.collection("users").document(uid).update(
-            mapOf(
-                "themePalette" to palette,
-                "themeBg" to bg,
-                "darkMode" to darkMode,
-                "updatedAt" to FieldValue.serverTimestamp()
-            )
-        ).await()
+        localPrefs.edit()
+            .putString("theme_palette_$uid", palette)
+            .putString("theme_bg_$uid", bg)
+            .putBoolean("theme_dark_$uid", darkMode)
+            .apply()
+        _userProfile.value = (_userProfile.value ?: UserProfile(id = uid, userId = uid)).copy(
+            themePalette = palette,
+            themeBg = bg,
+            darkMode = darkMode
+        )
+        runCatching {
+            patchRow("profiles", "id=eq.$uid", JSONObject().apply {
+                put("theme_palette", palette)
+                put("theme_bg", bg)
+                put("dark_mode", darkMode)
+            })
+        }
     }
 
     suspend fun updateUserProfileInfo(uid: String, displayName: String, memberCode: String?): Result<Unit> = runCatchingSafe {
-        val map = buildMap<String, Any> {
-            put("displayName", displayName.trim().take(120).ifBlank { "সদস্য" })
-            if (!memberCode.isNullOrBlank()) put("memberCode", memberCode.trim().take(40))
-            put("updatedAt", FieldValue.serverTimestamp())
+        val cleanName = displayName.trim().take(120).ifBlank { "সদস্য" }
+        _userProfile.value = (_userProfile.value ?: UserProfile(id = uid, userId = uid)).copy(
+            displayName = cleanName,
+            memberCode = memberCode?.trim()?.ifBlank { null }
+        )
+        val payload = JSONObject().apply {
+            put("full_name", cleanName)
+            put("display_name", cleanName)
+            if (!memberCode.isNullOrBlank()) put("member_code", memberCode.trim().take(40))
         }
-        db.collection("users").document(uid).update(map).await()
+        patchRow("profiles", "id=eq.$uid", payload)
     }
 
     suspend fun saveSalatAmol(uid: String, dayKey: String, prayers: List<String>, amolDone: List<String>, tasbihTotal: Int): Result<Unit> = runCatchingSafe {
-        val ref = db.collection("users").document(uid).collection("salat_amol").document(dayKey)
-        val exists = ref.get().await().exists()
-        if (exists) {
-            ref.update(
-                mapOf(
-                    "prayers" to prayers.take(5),
-                    "amolDone" to amolDone.take(30),
-                    "tasbihTotal" to tasbihTotal.coerceIn(0, 10_000_000),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
-        } else {
-            val log = SalatAmolLog(
-                userId = uid,
-                dateKey = dayKey,
-                prayers = prayers,
-                amolDone = amolDone,
-                tasbihTotal = tasbihTotal
-            )
-            ref.set(log.toCreateMap()).await()
-        }
+        val updated = SalatAmolLog(
+            id = dayKey,
+            userId = uid,
+            dateKey = dayKey,
+            prayers = prayers.take(5),
+            amolDone = amolDone.take(30),
+            tasbihTotal = tasbihTotal.coerceIn(0, 10_000_000)
+        )
+        val nextList = (_salatLogs.value.filterNot { it.dateKey == dayKey } + updated).sortedBy { it.dateKey }
+        _salatLogs.value = nextList
+        saveLocalSalatLogs(uid, nextList)
     }
 
     suspend fun createAiSession(uid: String, title: String): Result<String> = runCatching {
-        val ref = db.collection("users").document(uid).collection("ai_chats").document()
-        val session = AiChatSession(userId = uid, title = title)
-        ref.set(session.toCreateMap()).await()
-        ref.id
+        val id = "ai_${System.currentTimeMillis()}"
+        val session = AiChatSession(id = id, userId = uid, title = title.take(120).ifBlank { "নতুন কথোপকথন" })
+        val next = listOf(session) + _aiSessions.value
+        _aiSessions.value = next
+        saveLocalAiSessions(uid, next)
+        id
     }.onFailure { if (it is CancellationException) throw it }
 
     suspend fun addAiMessage(uid: String, chatId: String, sender: String, text: String, actionType: String? = null): Result<Unit> = runCatchingSafe {
-        val msg = AiChatMessage(userId = uid, sender = sender, text = text, actionType = actionType)
-        db.collection("users").document(uid).collection("ai_chats").document(chatId)
-            .collection("messages").add(msg.toCreateMap()).await()
+        val msg = AiChatMessage(
+            id = "m_${System.currentTimeMillis()}",
+            userId = uid,
+            sender = sender,
+            text = text,
+            actionType = actionType
+        )
+        val cur = _aiMessagesByChat.value[chatId].orEmpty()
+        _aiMessagesByChat.value = _aiMessagesByChat.value + (chatId to (cur + msg))
     }
 
     suspend fun saveTransaction(tx: FoundationTransaction): Result<Unit> = runCatchingSafe {
         require(tx.amount > 0.0) { "টাকার পরিমাণ শূন্যের বেশি হতে হবে" }
-        val docId = tx.id.ifBlank { db.collection("transactions").document().id }
-        db.collection("transactions").document(docId).set(tx.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", tx.userId)
+            put("kind", tx.kind)
+            put("amount", tx.amount)
+            put("fund_id", tx.fundId)
+            tx.memberId?.let { put("member_id", it) }
+            tx.donorName?.let { put("donor_name", it) }
+            tx.method?.let { put("method", it) }
+            tx.receiptNo?.let { put("receipt_no", it) }
+            tx.voucherNo?.let { put("voucher_no", it) }
+            tx.category?.let { put("category", it) }
+            tx.description?.let { put("description", it) }
+            put("date_str", tx.dateStr)
+            tx.year?.let { put("year", it) }
+            tx.month?.let { put("month", it) }
+            tx.status?.let { put("status", it) }
+        }
+        val inserted = insertRow("transactions", payload)
+        _transactions.value = listOf(SupabaseJsonMapper.toTransaction(inserted)) + _transactions.value
     }
 
     suspend fun deleteDocument(collection: String, docId: String): Result<Unit> = runCatchingSafe {
-        db.collection(collection).document(docId).delete().await()
+        deleteRow(collection, docId)
+        when (collection) {
+            "transactions" -> _transactions.value = _transactions.value.filterNot { it.id == docId }
+            "members" -> _members.value = _members.value.filterNot { it.id == docId }
+            "projects" -> _projects.value = _projects.value.filterNot { it.id == docId }
+            "notices" -> _notices.value = _notices.value.filterNot { it.id == docId }
+            "blood_requests" -> _bloodRequests.value = _bloodRequests.value.filterNot { it.id == docId }
+        }
     }
 
     suspend fun saveMember(member: Member, isEdit: Boolean): Result<Unit> = runCatchingSafe {
         require(member.fullName.isNotBlank()) { "সদস্যের নাম লিখুন" }
+        val payload = JSONObject().apply {
+            put("full_name", member.fullName.take(120))
+            member.phone?.let { put("phone", it) }
+            member.district?.let { put("district", it) }
+            member.bloodGroup?.let { put("blood_group", it) }
+            put("role", member.role)
+            member.roleLabel?.let { put("role_label", it) }
+            member.rank?.let { put("rank", it) }
+            put("member_code", member.memberCode)
+            put("active", member.active)
+            member.joinedDate?.let { put("joined_date", it) }
+        }
         if (isEdit && member.id.isNotBlank()) {
-            val updates = buildMap<String, Any> {
-                put("fullName", member.fullName.take(120))
-                member.phone?.let { put("phone", it.take(40)) }
-                member.district?.let { put("district", it.take(60)) }
-                member.bloodGroup?.let { put("bloodGroup", it.take(10)) }
-                put("role", member.role.take(40))
-                member.roleLabel?.let { put("roleLabel", it.take(60)) }
-                member.rank?.let { put("rank", it.coerceIn(1, 999)) }
-                put("memberCode", member.memberCode.take(40))
-                put("active", member.active)
-                put("updatedAt", FieldValue.serverTimestamp())
-            }
-            db.collection("members").document(member.id).update(updates).await()
+            patchRow("members", "id=eq.${member.id}", payload)
+            _members.value = _members.value.map { if (it.id == member.id) member else it }
         } else {
-            val docId = member.id.ifBlank { db.collection("members").document().id }
-            db.collection("members").document(docId).set(member.toCreateMap()).await()
+            val inserted = insertRow("members", payload)
+            _members.value = _members.value + SupabaseJsonMapper.toMember(inserted)
         }
     }
 
     suspend fun saveFund(fund: Fund): Result<Unit> = runCatchingSafe {
         require(fund.name.isNotBlank()) { "খাতের নাম লিখুন" }
-        val docId = fund.id.ifBlank { db.collection("funds").document().id }
-        db.collection("funds").document(docId).set(fund.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("name", fund.name.take(120))
+            fund.code?.let { put("code", it) }
+            fund.description?.let { put("description", it) }
+            fund.budget?.let { put("budget", it) }
+        }
+        val inserted = insertRow("funds", payload)
+        _funds.value = _funds.value + SupabaseJsonMapper.toFund(inserted)
     }
 
     suspend fun saveProject(project: Project): Result<Unit> = runCatchingSafe {
         require(project.title.isNotBlank()) { "প্রকল্পের শিরোনাম লিখুন" }
-        val docId = project.id.ifBlank { db.collection("projects").document().id }
-        db.collection("projects").document(docId).set(project.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("title", project.title.take(200))
+            put("category", project.category)
+            project.area?.let { put("area", it) }
+            project.description?.let { put("description", it) }
+            put("goal", project.goal)
+            put("fund_id", project.fundId)
+            put("status", project.status)
+        }
+        val inserted = insertRow("projects", payload)
+        _projects.value = listOf(SupabaseJsonMapper.toProject(inserted)) + _projects.value
     }
 
     suspend fun saveBloodRequest(req: BloodRequest): Result<Unit> = runCatchingSafe {
         require(req.hospital.isNotBlank() && req.contact.isNotBlank()) { "হাসপাতাল ও ফোন নম্বর লিখুন" }
-        val docId = req.id.ifBlank { db.collection("blood_requests").document().id }
-        db.collection("blood_requests").document(docId).set(req.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", req.userId)
+            put("blood_group", req.bloodGroup)
+            put("hospital", req.hospital)
+            req.district?.let { put("district", it) }
+            req.upazila?.let { put("upazila", it) }
+            put("contact", req.contact)
+            put("patient_problem", req.patientProblem)
+            req.neededByMillis?.let { put("needed_by_millis", it) }
+            put("urgent", req.urgent)
+            put("applicant_name", req.applicantName)
+            req.note?.let { put("note", it) }
+            put("managed", req.managed)
+        }
+        val inserted = insertRow("blood_requests", payload)
+        _bloodRequests.value = listOf(SupabaseJsonMapper.toBloodRequest(inserted)) + _bloodRequests.value
     }
 
     suspend fun markBloodRequestManaged(requestId: String): Result<Unit> = runCatchingSafe {
-        db.collection("blood_requests").document(requestId).update(
-            mapOf("managed" to true, "updatedAt" to FieldValue.serverTimestamp())
-        ).await()
+        patchRow("blood_requests", "id=eq.$requestId", JSONObject().put("managed", true))
+        _bloodRequests.value = _bloodRequests.value.map { if (it.id == requestId) it.copy(managed = true) else it }
     }
 
     suspend fun saveBloodDonor(donor: BloodDonor): Result<Unit> = runCatchingSafe {
         require(donor.fullName.isNotBlank() && donor.phone.isNotBlank()) { "রক্তদাতার নাম ও ফোন লিখুন" }
-        val docId = donor.id.ifBlank { db.collection("blood_donors").document().id }
-        db.collection("blood_donors").document(docId).set(donor.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", donor.userId)
+            put("full_name", donor.fullName)
+            put("blood_group", donor.bloodGroup)
+            put("district", donor.district)
+            donor.upazila?.let { put("upazila", it) }
+            put("phone", donor.phone)
+            donor.whatsapp?.let { put("whatsapp", it) }
+            put("available", donor.available)
+            put("total_donations", donor.totalDonations)
+            donor.lastDonated?.let { put("last_donated", it) }
+        }
+        val inserted = insertRow("blood_donors", payload)
+        _bloodDonors.value = listOf(SupabaseJsonMapper.toBloodDonor(inserted)) + _bloodDonors.value
     }
 
     suspend fun saveReliefLocation(loc: ReliefLocation): Result<Unit> = runCatchingSafe {
         require(loc.title.isNotBlank()) { "ক্যাম্পের নাম লিখুন" }
-        val docId = loc.id.ifBlank { db.collection("relief_locations").document().id }
-        db.collection("relief_locations").document(docId).set(loc.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("title", loc.title)
+            put("division", loc.division)
+            put("district", loc.district)
+            loc.area?.let { put("area", it) }
+            put("disaster_type", loc.disasterType)
+            put("families_helped", loc.familiesHelped)
+            put("amount_distributed", loc.amountDistributed)
+            loc.distributedDate?.let { put("distributed_date", it) }
+            put("lat", loc.lat)
+            put("lng", loc.lng)
+        }
+        val inserted = insertRow("relief_locations", payload)
+        _reliefLocations.value = listOf(SupabaseJsonMapper.toReliefLocation(inserted)) + _reliefLocations.value
     }
 
     suspend fun saveFieldReport(report: FieldReport): Result<Unit> = runCatchingSafe {
         require(report.title.isNotBlank()) { "রিপোর্টের শিরোনাম লিখুন" }
-        val docId = report.id.ifBlank { db.collection("field_reports").document().id }
-        db.collection("field_reports").document(docId).set(report.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", report.userId)
+            put("title", report.title)
+            put("category", report.category)
+            report.location?.let { put("location", it) }
+            report.body?.let { put("body", it) }
+            put("spent", report.spent)
+            put("beneficiaries", report.beneficiaries)
+            put("status", report.status)
+            put("author_name", report.authorName)
+            put("reaction_count", report.reactionCount)
+        }
+        val inserted = insertRow("field_reports", payload)
+        _fieldReports.value = listOf(SupabaseJsonMapper.toFieldReport(inserted)) + _fieldReports.value
     }
 
     suspend fun reactFieldReport(reportId: String, nextCount: Int): Result<Unit> = runCatchingSafe {
-        db.collection("field_reports").document(reportId).update(
-            mapOf("reactionCount" to nextCount, "updatedAt" to FieldValue.serverTimestamp())
-        ).await()
+        patchRow("field_reports", "id=eq.$reportId", JSONObject().put("reaction_count", nextCount))
+        _fieldReports.value = _fieldReports.value.map { if (it.id == reportId) it.copy(reactionCount = nextCount) else it }
     }
 
     suspend fun saveEvent(event: FoundationEvent): Result<Unit> = runCatchingSafe {
         require(event.title.isNotBlank()) { "ইভেন্টের নাম লিখুন" }
-        val docId = event.id.ifBlank { db.collection("events").document().id }
-        db.collection("events").document(docId).set(event.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", event.userId)
+            put("title", event.title)
+            put("type", event.type)
+            put("event_date_millis", event.eventDateMillis)
+            event.location?.let { put("location", it) }
+            event.description?.let { put("description", it) }
+            put("attendee_uids", JSONArray(event.attendeeUids))
+        }
+        val inserted = insertRow("events", payload)
+        _events.value = _events.value + SupabaseJsonMapper.toEvent(inserted)
     }
 
     suspend fun toggleEventRsvp(event: FoundationEvent, uid: String): Result<Unit> = runCatchingSafe {
         val nextList = if (uid in event.attendeeUids) event.attendeeUids - uid else (event.attendeeUids + uid).take(100)
-        db.collection("events").document(event.id).update(
-            mapOf("attendeeUids" to nextList, "updatedAt" to FieldValue.serverTimestamp())
-        ).await()
+        patchRow("events", "id=eq.${event.id}", JSONObject().put("attendee_uids", JSONArray(nextList)))
+        _events.value = _events.value.map { if (it.id == event.id) it.copy(attendeeUids = nextList) else it }
     }
 
     suspend fun saveNotice(notice: Notice): Result<Unit> = runCatchingSafe {
         require(notice.title.isNotBlank() && notice.body.isNotBlank()) { "শিরোনাম ও বিবরণ লিখুন" }
-        val docId = notice.id.ifBlank { db.collection("notices").document().id }
-        db.collection("notices").document(docId).set(notice.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", notice.userId)
+            put("title", notice.title)
+            put("body", notice.body)
+            put("urgent", notice.urgent)
+            put("like_count", notice.likeCount)
+            put("support_count", notice.supportCount)
+        }
+        val inserted = insertRow("notices", payload)
+        _notices.value = listOf(SupabaseJsonMapper.toNotice(inserted)) + _notices.value
     }
 
     suspend fun reactNotice(notice: Notice, isLike: Boolean): Result<Unit> = runCatchingSafe {
-        val updates = if (isLike) {
-            mapOf("likeCount" to notice.likeCount + 1, "updatedAt" to FieldValue.serverTimestamp())
-        } else {
-            mapOf("supportCount" to notice.supportCount + 1, "updatedAt" to FieldValue.serverTimestamp())
+        val nextLike = if (isLike) notice.likeCount + 1 else notice.likeCount
+        val nextSup = if (!isLike) notice.supportCount + 1 else notice.supportCount
+        val payload = JSONObject().apply {
+            if (isLike) put("like_count", nextLike) else put("support_count", nextSup)
         }
-        db.collection("notices").document(notice.id).update(updates).await()
+        patchRow("notices", "id=eq.${notice.id}", payload)
+        _notices.value = _notices.value.map {
+            if (it.id == notice.id) it.copy(likeCount = nextLike, supportCount = nextSup) else it
+        }
     }
 
     suspend fun createPoll(poll: Poll): Result<Unit> = runCatchingSafe {
         require(poll.question.isNotBlank() && poll.options.size >= 2) { "প্রশ্ন ও কমপক্ষে ২টি অপশন দিন" }
-        val docId = poll.id.ifBlank { db.collection("polls").document().id }
-        db.collection("polls").document(docId).set(poll.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", poll.userId)
+            put("question", poll.question)
+            poll.description?.let { put("description", it) }
+            put("options", JSONArray(poll.options))
+            put("vote_counts", JSONArray(poll.voteCounts))
+            put("closed", poll.closed)
+        }
+        val inserted = insertRow("polls", payload)
+        _polls.value = listOf(SupabaseJsonMapper.toPoll(inserted)) + _polls.value
     }
 
-    suspend fun getMyVote(pollId: String, uid: String): Int? {
-        return runCatching {
-            val doc = db.collection("polls").document(pollId).collection("votes").document(uid).get().await()
-            if (doc.exists()) doc.getLong("optionIdx")?.toInt() else null
-        }.getOrNull()
+    suspend fun getMyVote(pollId: String, uid: String): Int? = withContext(Dispatchers.IO) {
+        val localKey = "poll_vote_${pollId}_$uid"
+        if (localPrefs.contains(localKey)) localPrefs.getInt(localKey, -1).takeIf { it >= 0 } else null
     }
 
     suspend fun castPollVote(poll: Poll, uid: String, optionIdx: Int): Result<Unit> = runCatchingSafe {
         require(!poll.closed) { "এই ভোটটি বন্ধ হয়ে গেছে" }
-        val pollRef = db.collection("polls").document(poll.id)
-        val voteRef = pollRef.collection("votes").document(uid)
-        val existingVote = voteRef.get().await()
-        val prevIdx = if (existingVote.exists()) existingVote.getLong("optionIdx")?.toInt() else null
+        val localKey = "poll_vote_${poll.id}_$uid"
+        val prevIdx = if (localPrefs.contains(localKey)) localPrefs.getInt(localKey, -1) else -1
         if (prevIdx == optionIdx) return@runCatchingSafe
 
         val nextCounts = poll.voteCounts.toMutableList()
         while (nextCounts.size < poll.options.size) nextCounts.add(0)
-        if (prevIdx != null && prevIdx in nextCounts.indices) {
-            nextCounts[prevIdx] = (nextCounts[prevIdx] - 1).coerceAtLeast(0)
-        }
-        if (optionIdx in nextCounts.indices) {
-            nextCounts[optionIdx] = nextCounts[optionIdx] + 1
-        }
+        if (prevIdx in nextCounts.indices) nextCounts[prevIdx] = (nextCounts[prevIdx] - 1).coerceAtLeast(0)
+        if (optionIdx in nextCounts.indices) nextCounts[optionIdx] = nextCounts[optionIdx] + 1
 
-        val batch = db.batch()
-        if (existingVote.exists()) {
-            batch.update(voteRef, mapOf("optionIdx" to optionIdx, "updatedAt" to FieldValue.serverTimestamp()))
-        } else {
-            val vote = PollVote(userId = uid, pollId = poll.id, optionIdx = optionIdx)
-            batch.set(voteRef, vote.toCreateMap())
-        }
-        batch.update(pollRef, mapOf("voteCounts" to nextCounts, "updatedAt" to FieldValue.serverTimestamp()))
-        batch.commit().await()
+        patchRow("polls", "id=eq.${poll.id}", JSONObject().put("vote_counts", JSONArray(nextCounts)))
+        localPrefs.edit().putInt(localKey, optionIdx).apply()
+        _polls.value = _polls.value.map { if (it.id == poll.id) it.copy(voteCounts = nextCounts) else it }
     }
 
     suspend fun sendChatMessage(msg: ChatMessage): Result<Unit> = runCatchingSafe {
         require(msg.body.isNotBlank()) { "বার্তা খালি রাখা যাবে না" }
-        val docId = msg.id.ifBlank { db.collection("chat_messages").document().id }
-        db.collection("chat_messages").document(docId).set(msg.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", msg.userId)
+            put("channel", msg.channel)
+            put("sender_name", msg.senderName)
+            msg.senderRole?.let { put("sender_role", it) }
+            put("body", msg.body)
+        }
+        val inserted = insertRow("chat_messages", payload)
+        _chatMessages.value = _chatMessages.value + SupabaseJsonMapper.toChatMessage(inserted)
     }
 
     suspend fun saveVoice(voice: VoiceTestimonial): Result<Unit> = runCatchingSafe {
         require(voice.name.isNotBlank() && voice.body.isNotBlank()) { "নাম ও মন্তব্য লিখুন" }
-        val docId = voice.id.ifBlank { db.collection("voices").document().id }
-        db.collection("voices").document(docId).set(voice.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", voice.userId)
+            put("name", voice.name)
+            put("label", voice.label)
+            put("rating", voice.rating)
+            put("body", voice.body)
+            put("status", voice.status)
+        }
+        val inserted = insertRow("voices", payload)
+        _voices.value = listOf(SupabaseJsonMapper.toVoice(inserted)) + _voices.value
     }
 
     suspend fun updateVoiceStatus(voiceId: String, status: String): Result<Unit> = runCatchingSafe {
-        db.collection("voices").document(voiceId).update(
-            mapOf("status" to status, "updatedAt" to FieldValue.serverTimestamp())
-        ).await()
+        patchRow("voices", "id=eq.$voiceId", JSONObject().put("status", status))
+        _voices.value = _voices.value.map { if (it.id == voiceId) it.copy(status = status) else it }
     }
 
     suspend fun saveDuty(duty: VolunteerDuty): Result<Unit> = runCatchingSafe {
         require(duty.title.isNotBlank()) { "কাজের শিরোনাম লিখুন" }
-        val docId = duty.id.ifBlank { db.collection("duties").document().id }
-        db.collection("duties").document(docId).set(duty.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", duty.userId)
+            put("title", duty.title)
+            duty.description?.let { put("description", it) }
+            put("assigned_to_name", duty.assignedToName)
+            duty.dueOn?.let { put("due_on", it) }
+            put("status", duty.status)
+        }
+        val inserted = insertRow("duties", payload)
+        _duties.value = listOf(SupabaseJsonMapper.toDuty(inserted)) + _duties.value
     }
 
     suspend fun updateDutyStatus(dutyId: String, status: String): Result<Unit> = runCatchingSafe {
-        db.collection("duties").document(dutyId).update(
-            mapOf("status" to status, "updatedAt" to FieldValue.serverTimestamp())
-        ).await()
+        patchRow("duties", "id=eq.$dutyId", JSONObject().put("status", status))
+        _duties.value = _duties.value.map { if (it.id == dutyId) it.copy(status = status) else it }
     }
 
     suspend fun submitPublicRequest(req: PublicRequest): Result<Unit> = runCatchingSafe {
         require(req.name.isNotBlank()) { "আপনার নাম লিখুন" }
-        val docId = req.id.ifBlank { db.collection("public_requests").document().id }
-        db.collection("public_requests").document(docId).set(req.toCreateMap()).await()
+        val payload = JSONObject().apply {
+            put("user_id", req.userId)
+            put("kind", req.kind)
+            put("name", req.name)
+            req.phone?.let { put("phone", it) }
+            req.email?.let { put("email", it) }
+            req.district?.let { put("district", it) }
+            req.bloodGroup?.let { put("blood_group", it) }
+            req.aidType?.let { put("aid_type", it) }
+            req.amountNeeded?.let { put("amount_needed", it) }
+            req.subject?.let { put("subject", it) }
+            req.details?.let { put("details", it) }
+            put("status", "pending")
+        }
+        val inserted = insertRow("public_requests", payload)
+        _publicRequests.value = listOf(SupabaseJsonMapper.toPublicRequest(inserted)) + _publicRequests.value
     }
 
     suspend fun updatePublicRequestStatus(reqId: String, status: String): Result<Unit> = runCatchingSafe {
-        db.collection("public_requests").document(reqId).update(
-            mapOf("status" to status, "updatedAt" to FieldValue.serverTimestamp())
-        ).await()
+        patchRow("public_requests", "id=eq.$reqId", JSONObject().put("status", status))
+        _publicRequests.value = _publicRequests.value.map { if (it.id == reqId) it.copy(status = status) else it }
     }
 
     suspend fun updateFoundationSettings(settings: FoundationSettings): Result<Unit> = runCatchingSafe {
+        val payload = JSONObject().apply {
+            put("org_name", settings.orgName)
+            settings.slogan?.let { put("slogan", it) }
+            settings.hotline?.let { put("hotline", it) }
+            settings.bankDetails?.let { put("bank_details", it) }
+            settings.goalTitle?.let { put("goal_title", it) }
+            put("target_amount", settings.targetAmount)
+            settings.collectedAmount?.let { put("collected_amount", it) }
+            settings.monthlyFee?.let { put("monthly_fee", it) }
+            settings.joinCode?.let { put("registration_code", it) }
+            settings.disabledFeatures?.let { put("disabled_features", JSONArray(it)) }
+        }
         val docId = settings.id.ifBlank { "main" }
-        db.collection("foundation_settings").document(docId).update(
-            buildMap {
-                put("orgName", settings.orgName.take(120))
-                settings.slogan?.let { put("slogan", it.take(200)) }
-                settings.hotline?.let { put("hotline", it.take(40)) }
-                settings.bankDetails?.let { put("bankDetails", it.take(600)) }
-                settings.goalTitle?.let { put("goalTitle", it.take(120)) }
-                put("targetAmount", settings.targetAmount.coerceIn(0.0, 1_000_000_000.0))
-                settings.collectedAmount?.let { put("collectedAmount", it.coerceAtLeast(0.0)) }
-                settings.monthlyFee?.let { put("monthlyFee", it.coerceAtLeast(0.0)) }
-                settings.joinCode?.let { put("joinCode", it.take(40)) }
-                settings.disabledFeatures?.let { put("disabledFeatures", it.take(30)) }
-                put("updatedAt", FieldValue.serverTimestamp())
+        patchRow("settings", "id=eq.$docId", payload)
+        _settings.value = settings
+    }
+
+    private suspend fun <T> fetchTableFirst(
+        candidates: List<String>,
+        query: String = "select=*",
+        mapper: (JSONObject) -> T
+    ): List<T> {
+        val q = if ("select=" in query) query else "select=*&$query"
+        for (table in candidates) {
+            val res = restRequest("GET", "/rest/v1/$table?$q", null)
+            if (res.first in 200..299) {
+                return runCatching { SupabaseJsonMapper.parseArray(res.second, mapper) }.getOrDefault(emptyList())
             }
-        ).await()
+        }
+        return emptyList()
+    }
+
+    private suspend fun insertRow(table: String, body: JSONObject): JSONObject {
+        val (code, raw) = restRequest(
+            method = "POST",
+            path = "/rest/v1/$table",
+            jsonBody = body.toString(),
+            prefer = "return=representation"
+        )
+        if (code !in 200..299) {
+            throw IllegalStateException(parsePostgrestError(raw, "ডেটা সংরক্ষণ ব্যর্থ (HTTP $code)"))
+        }
+        val arr = runCatching { JSONArray(raw) }.getOrNull()
+        return arr?.optJSONObject(0) ?: body
+    }
+
+    private suspend fun patchRow(table: String, filter: String, body: JSONObject) {
+        val (code, raw) = restRequest(
+            method = "PATCH",
+            path = "/rest/v1/$table?$filter",
+            jsonBody = body.toString(),
+            prefer = "return=representation"
+        )
+        if (code !in 200..299) {
+            throw IllegalStateException(parsePostgrestError(raw, "আপডেট ব্যর্থ (HTTP $code)"))
+        }
+    }
+
+    private suspend fun deleteRow(table: String, docId: String) {
+        val (code, raw) = restRequest("DELETE", "/rest/v1/$table?id=eq.$docId", null)
+        if (code !in 200..299) {
+            throw IllegalStateException(parsePostgrestError(raw, "মুছে ফেলা যায়নি (HTTP $code)"))
+        }
+    }
+
+    private suspend fun restRequest(
+        method: String,
+        path: String,
+        jsonBody: String?,
+        prefer: String? = null
+    ): Pair<Int, String> = withContext(Dispatchers.IO) {
+        val base = SupabaseAuthHelper.baseUrl()
+        val key = SupabaseAuthHelper.anonKey()
+        val token = SupabaseAuthHelper.getValidAccessToken(appContext) ?: key
+        val conn = (URL("$base$path").openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = 15_000
+            readTimeout = 20_000
+            setRequestProperty("apikey", key)
+            setRequestProperty("Authorization", "Bearer $token")
+            setRequestProperty("Accept", "application/json")
+            if (prefer != null) setRequestProperty("Prefer", prefer)
+            if (jsonBody != null) {
+                setRequestProperty("Content-Type", "application/json")
+                doOutput = true
+            }
+        }
+        try {
+            if (jsonBody != null) {
+                conn.outputStream.use { it.write(jsonBody.toByteArray(Charsets.UTF_8)) }
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val raw = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            if (code !in 200..299 && code != 404) {
+                Log.w(TAG, "$method $path -> $code: $raw")
+            }
+            code to raw
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun parsePostgrestError(raw: String, fallback: String): String {
+        val obj = runCatching { JSONObject(raw) }.getOrNull()
+        return obj?.optString("message")?.ifBlank { null }
+            ?: obj?.optString("hint")?.ifBlank { null }
+            ?: fallback
+    }
+
+    private fun loadLocalSalatLogs(uid: String): List<SalatAmolLog> {
+        val raw = localPrefs.getString("salat_logs_$uid", null) ?: return emptyList()
+        return runCatching { SupabaseJsonMapper.parseArray(raw) { SupabaseJsonMapper.toSalatAmolLog(it) } }.getOrDefault(emptyList())
+    }
+
+    private fun saveLocalSalatLogs(uid: String, list: List<SalatAmolLog>) {
+        val arr = JSONArray()
+        list.forEach { log ->
+            arr.put(JSONObject().apply {
+                put("id", log.dateKey)
+                put("user_id", uid)
+                put("date_key", log.dateKey)
+                put("prayers", JSONArray(log.prayers))
+                put("amol_done", JSONArray(log.amolDone))
+                put("tasbih_total", log.tasbihTotal)
+            })
+        }
+        localPrefs.edit().putString("salat_logs_$uid", arr.toString()).apply()
+    }
+
+    private fun loadLocalAiSessions(uid: String): List<AiChatSession> {
+        val raw = localPrefs.getString("ai_sessions_$uid", null) ?: return emptyList()
+        return runCatching { SupabaseJsonMapper.parseArray(raw) { SupabaseJsonMapper.toAiSession(it) } }.getOrDefault(emptyList())
+    }
+
+    private fun saveLocalAiSessions(uid: String, list: List<AiChatSession>) {
+        val arr = JSONArray()
+        list.forEach { s ->
+            arr.put(JSONObject().apply {
+                put("id", s.id)
+                put("user_id", uid)
+                put("title", s.title)
+            })
+        }
+        localPrefs.edit().putString("ai_sessions_$uid", arr.toString()).apply()
     }
 
     private suspend inline fun runCatchingSafe(crossinline block: suspend () -> Unit): Result<Unit> {
