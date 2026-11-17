@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">মানবসেবা ফাউন্ডেশন</string>
+    <string name="app_slogan">মানুষের পাশে, মানবতার পাশে</string>
+    <string name="sign_in_title">মানবসেবা ফাউন্ডেশনে স্বাগতম</string>
+    <string name="sign_in_subtitle">স্বচ্ছ হিসাব, জরুরি রক্তের আবেদন, ত্রাণ ও মানবসেবা AI ব্যবহার করতে Google দিয়ে সাইন-ইন করুন।</string>
+    <string name="sign_in_google_button">Google দিয়ে সাইন-ইন করুন</string>
+    <string name="sign_out_button">লগআউট</string>
+    <string name="nav_home">হোম</string>
+    <string name="nav_overview">ড্যাশবোর্ড</string>
+    <string name="nav_ai">AI হাব</string>
+    <string name="nav_finance">আয়-ব্যয়</string>
+    <string name="nav_blood">রক্তদান SOS</string>
+    <string name="nav_islamic">ইসলামিক</string>
+    <string name="nav_more">সব মেনু</string>
+    <string name="emergency_999">জরুরি ৯৯৯</string>
+    <string name="donate_now">দান করুন</string>
+    <string name="error_generic">কিছু একটা সমস্যা হয়েছে, আবার চেষ্টা করুন।</string>
+</resources>

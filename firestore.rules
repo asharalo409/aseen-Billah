@@ -1,0 +1,715 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Shared Security Primitives ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    function isBootstrapAdmin() {
+      return isSignedIn() &&
+        ('email_verified' in request.auth.token) &&
+        request.auth.token.email_verified == true &&
+        ('email' in request.auth.token) &&
+        request.auth.token.email == 'taseenbillah@gmail.com';
+    }
+    function isAdmin() {
+      return isBootstrapAdmin() ||
+        (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() {
+      return request.resource.data;
+    }
+    function existing() {
+      return resource.data;
+    }
+    function isValidTs(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+    function isNonEmptyStr(v, maxLen) {
+      return v is string && v.size() >= 1 && v.size() <= maxLen;
+    }
+    function isOptStr(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    // --- Admins ---
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if isBootstrapAdmin();
+      allow create, update, delete: if isValidId(adminId) && isBootstrapAdmin();
+    }
+
+    // --- User Profiles & Private Subcollections ---
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() <= 128 &&
+        isNonEmptyStr(data.displayName, 120) &&
+        data.role is string && data.role in ['admin', 'president', 'general_secretary', 'cashier', 'health', 'sports', 'publicity', 'member'] &&
+        isOptStr(data, 'email', 160) &&
+        isOptStr(data, 'memberCode', 40) &&
+        isOptStr(data, 'themePalette', 30) &&
+        isOptStr(data, 'themeBg', 30) &&
+        (!('darkMode' in data) || data.darkMode is bool) &&
+        isValidTs(data.createdAt) &&
+        isValidTs(data.updatedAt);
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrapAdmin();
+      allow create: if isValidId(userId) && isOwner(userId) &&
+        incoming().userId == request.auth.uid &&
+        (incoming().role == 'member' || isBootstrapAdmin()) &&
+        incoming().keys().hasAll(['userId', 'displayName', 'role', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'displayName', 'email', 'role', 'memberCode', 'themePalette', 'themeBg', 'darkMode', 'createdAt', 'updatedAt']) &&
+        isValidUserProfile(incoming());
+      allow update: if isValidId(userId) && (isOwner(userId) || isAdmin()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidUserProfile(incoming()) &&
+        (
+          isAdmin() ||
+          (incoming().role == existing().role &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'memberCode', 'themePalette', 'themeBg', 'darkMode', 'updatedAt']))
+        );
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      function isValidSalatAmol(data) {
+        return data.userId == userId &&
+          isNonEmptyStr(data.dateKey, 20) &&
+          data.prayers is list && data.prayers.size() <= 5 && (data.prayers.size() == 0 || data.prayers[0] is string) &&
+          data.amolDone is list && data.amolDone.size() <= 30 && (data.amolDone.size() == 0 || data.amolDone[0] is string) &&
+          data.tasbihTotal is int && data.tasbihTotal >= 0 && data.tasbihTotal <= 10000000 &&
+          isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+      }
+
+      match /salat_amol/{dayKey} {
+        allow list: if isOwner(userId);
+        allow get: if isValidId(dayKey) && isOwner(userId);
+        allow create: if isValidId(dayKey) && isOwner(userId) &&
+          incoming().keys().hasAll(['userId', 'dateKey', 'prayers', 'amolDone', 'tasbihTotal', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'dateKey', 'prayers', 'amolDone', 'tasbihTotal', 'createdAt', 'updatedAt']) &&
+          isValidSalatAmol(incoming());
+        allow update: if isValidId(dayKey) && isOwner(userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidSalatAmol(incoming()) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['prayers', 'amolDone', 'tasbihTotal', 'updatedAt']);
+        allow delete: if isValidId(dayKey) && isOwner(userId);
+      }
+
+      function isValidAiSession(data) {
+        return data.userId == userId &&
+          isNonEmptyStr(data.title, 160) &&
+          isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+      }
+
+      match /ai_chats/{chatId} {
+        allow list: if isOwner(userId);
+        allow get: if isValidId(chatId) && isOwner(userId);
+        allow create: if isValidId(chatId) && isOwner(userId) &&
+          incoming().keys().hasAll(['userId', 'title', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'title', 'createdAt', 'updatedAt']) &&
+          isValidAiSession(incoming());
+        allow update: if isValidId(chatId) && isOwner(userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidAiSession(incoming()) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'updatedAt']);
+        allow delete: if isValidId(chatId) && isOwner(userId);
+
+        function isValidAiMsg(data) {
+          return data.userId == userId &&
+            data.sender in ['user', 'assistant'] &&
+            isNonEmptyStr(data.text, 8000) &&
+            isOptStr(data, 'actionType', 80) &&
+            isValidTs(data.createdAt);
+        }
+
+        match /messages/{msgId} {
+          allow list: if isOwner(userId);
+          allow get: if isValidId(msgId) && isOwner(userId);
+          allow create: if isValidId(msgId) && isOwner(userId) &&
+            incoming().keys().hasAll(['userId', 'sender', 'text', 'createdAt']) &&
+            incoming().keys().hasOnly(['userId', 'sender', 'text', 'actionType', 'createdAt']) &&
+            isValidAiMsg(incoming());
+          allow update: if false;
+          allow delete: if isValidId(msgId) && isOwner(userId);
+        }
+      }
+    }
+
+    // --- Foundation Settings ---
+    function isValidFoundationSettings(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.orgName, 120) &&
+        isOptStr(data, 'slogan', 200) &&
+        isOptStr(data, 'hotline', 40) &&
+        isOptStr(data, 'bankDetails', 600) &&
+        isOptStr(data, 'goalTitle', 120) &&
+        data.targetAmount is number && data.targetAmount >= 0 && data.targetAmount <= 1000000000 &&
+        (!('collectedAmount' in data) || (data.collectedAmount is number && data.collectedAmount >= 0)) &&
+        (!('monthlyFee' in data) || (data.monthlyFee is number && data.monthlyFee >= 0)) &&
+        isOptStr(data, 'joinCode', 40) &&
+        (!('disabledFeatures' in data) || (data.disabledFeatures is list && data.disabledFeatures.size() <= 30 && (data.disabledFeatures.size() == 0 || data.disabledFeatures[0] is string))) &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /foundation_settings/{settingId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(settingId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(settingId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'orgName', 'targetAmount', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'orgName', 'slogan', 'hotline', 'bankDetails', 'goalTitle', 'targetAmount', 'collectedAmount', 'monthlyFee', 'joinCode', 'disabledFeatures', 'createdAt', 'updatedAt']) &&
+        isValidFoundationSettings(incoming());
+      allow update: if isValidId(settingId) && isSignedIn() &&
+        (existing().userId == request.auth.uid || isAdmin()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidFoundationSettings(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['orgName', 'slogan', 'hotline', 'bankDetails', 'goalTitle', 'targetAmount', 'collectedAmount', 'monthlyFee', 'joinCode', 'disabledFeatures', 'updatedAt']);
+      allow delete: if isValidId(settingId) && isAdmin();
+    }
+
+    // --- Members Directory ---
+    function isValidMember(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.fullName, 120) &&
+        isOptStr(data, 'phone', 40) &&
+        isOptStr(data, 'district', 60) &&
+        isOptStr(data, 'bloodGroup', 10) &&
+        isNonEmptyStr(data.role, 40) &&
+        isOptStr(data, 'roleLabel', 60) &&
+        (!('rank' in data) || (data.rank is int && data.rank >= 1 && data.rank <= 999)) &&
+        isNonEmptyStr(data.memberCode, 40) &&
+        data.active is bool &&
+        isOptStr(data, 'joinedDate', 30) &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /members/{memberId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(memberId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(memberId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'fullName', 'role', 'memberCode', 'active', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'fullName', 'phone', 'district', 'bloodGroup', 'role', 'roleLabel', 'rank', 'memberCode', 'active', 'joinedDate', 'createdAt', 'updatedAt']) &&
+        isValidMember(incoming());
+      allow update: if isValidId(memberId) && isSignedIn() &&
+        (existing().userId == request.auth.uid || isAdmin()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidMember(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phone', 'district', 'bloodGroup', 'role', 'roleLabel', 'rank', 'memberCode', 'active', 'joinedDate', 'updatedAt']);
+      allow delete: if isValidId(memberId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Funds ---
+    function isValidFund(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.name, 120) &&
+        isOptStr(data, 'code', 40) &&
+        isOptStr(data, 'description', 500) &&
+        (!('budget' in data) || (data.budget is number && data.budget >= 0)) &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /funds/{fundId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(fundId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(fundId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'name', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'name', 'code', 'description', 'budget', 'createdAt', 'updatedAt']) &&
+        isValidFund(incoming());
+      allow update: if isValidId(fundId) && isSignedIn() &&
+        (existing().userId == request.auth.uid || isAdmin()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidFund(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'code', 'description', 'budget', 'updatedAt']);
+      allow delete: if isValidId(fundId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Transactions (Donations / Expenses / Monthly Fees) ---
+    function isValidTransaction(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        data.kind in ['donation', 'expense', 'fee'] &&
+        data.amount is number && data.amount > 0 && data.amount <= 100000000 &&
+        isNonEmptyStr(data.fundId, 128) &&
+        isOptStr(data, 'memberId', 128) &&
+        isOptStr(data, 'donorName', 120) &&
+        isOptStr(data, 'method', 60) &&
+        isOptStr(data, 'receiptNo', 60) &&
+        isOptStr(data, 'voucherNo', 60) &&
+        isOptStr(data, 'category', 60) &&
+        isOptStr(data, 'description', 500) &&
+        isNonEmptyStr(data.dateStr, 30) &&
+        (!('year' in data) || (data.year is int && data.year >= 2000 && data.year <= 2100)) &&
+        (!('month' in data) || (data.month is int && data.month >= 1 && data.month <= 12)) &&
+        isOptStr(data, 'status', 30) &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /transactions/{txId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(txId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(txId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'kind', 'amount', 'fundId', 'dateStr', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'kind', 'amount', 'fundId', 'memberId', 'donorName', 'method', 'receiptNo', 'voucherNo', 'category', 'description', 'dateStr', 'year', 'month', 'status', 'createdAt', 'updatedAt']) &&
+        isValidTransaction(incoming());
+      allow update: if isValidId(txId) && isSignedIn() &&
+        (existing().userId == request.auth.uid || isAdmin()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTransaction(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['amount', 'fundId', 'memberId', 'donorName', 'method', 'receiptNo', 'voucherNo', 'category', 'description', 'dateStr', 'year', 'month', 'status', 'updatedAt']);
+      allow delete: if isValidId(txId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Projects ---
+    function isValidProject(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.title, 200) &&
+        isNonEmptyStr(data.category, 60) &&
+        isOptStr(data, 'area', 120) &&
+        isOptStr(data, 'description', 1000) &&
+        data.goal is number && data.goal >= 0 && data.goal <= 1000000000 &&
+        isNonEmptyStr(data.fundId, 128) &&
+        data.status in ['active', 'completed', 'paused'] &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /projects/{projectId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(projectId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(projectId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'title', 'category', 'goal', 'fundId', 'status', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'title', 'category', 'area', 'description', 'goal', 'fundId', 'status', 'createdAt', 'updatedAt']) &&
+        isValidProject(incoming());
+      allow update: if isValidId(projectId) && isSignedIn() &&
+        (existing().userId == request.auth.uid || isAdmin()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidProject(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'area', 'description', 'goal', 'fundId', 'status', 'updatedAt']);
+      allow delete: if isValidId(projectId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Blood Requests ---
+    function isValidBloodRequest(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        data.bloodGroup in ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] &&
+        isNonEmptyStr(data.hospital, 160) &&
+        isOptStr(data, 'district', 60) &&
+        isOptStr(data, 'upazila', 60) &&
+        isNonEmptyStr(data.contact, 40) &&
+        isNonEmptyStr(data.patientProblem, 300) &&
+        (!('neededByMillis' in data) || data.neededByMillis is int) &&
+        data.urgent is bool &&
+        isNonEmptyStr(data.applicantName, 120) &&
+        isOptStr(data, 'note', 500) &&
+        data.managed is bool &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /blood_requests/{requestId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(requestId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(requestId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'bloodGroup', 'hospital', 'contact', 'patientProblem', 'urgent', 'applicantName', 'managed', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'bloodGroup', 'hospital', 'district', 'upazila', 'contact', 'patientProblem', 'neededByMillis', 'urgent', 'applicantName', 'note', 'managed', 'createdAt', 'updatedAt']) &&
+        isValidBloodRequest(incoming());
+      allow update: if isValidId(requestId) && isSignedIn() &&
+        isValidBloodRequest(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          ((existing().userId == request.auth.uid || isAdmin()) &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['bloodGroup', 'hospital', 'district', 'upazila', 'contact', 'patientProblem', 'neededByMillis', 'urgent', 'applicantName', 'note', 'managed', 'updatedAt'])) ||
+          (existing().managed == false && incoming().managed == true &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['managed', 'updatedAt']))
+        );
+      allow delete: if isValidId(requestId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Blood Donors ---
+    function isValidBloodDonor(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.fullName, 120) &&
+        data.bloodGroup in ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'] &&
+        isNonEmptyStr(data.district, 60) &&
+        isOptStr(data, 'upazila', 60) &&
+        isNonEmptyStr(data.phone, 40) &&
+        isOptStr(data, 'whatsapp', 40) &&
+        data.available is bool &&
+        data.totalDonations is int && data.totalDonations >= 0 && data.totalDonations <= 500 &&
+        isOptStr(data, 'lastDonated', 30) &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /blood_donors/{donorId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(donorId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(donorId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'fullName', 'bloodGroup', 'district', 'phone', 'available', 'totalDonations', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'fullName', 'bloodGroup', 'district', 'upazila', 'phone', 'whatsapp', 'available', 'totalDonations', 'lastDonated', 'createdAt', 'updatedAt']) &&
+        isValidBloodDonor(incoming());
+      allow update: if isValidId(donorId) && isSignedIn() &&
+        (existing().userId == request.auth.uid || isAdmin()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidBloodDonor(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'bloodGroup', 'district', 'upazila', 'phone', 'whatsapp', 'available', 'totalDonations', 'lastDonated', 'updatedAt']);
+      allow delete: if isValidId(donorId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Relief Locations ---
+    function isValidReliefLocation(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.title, 180) &&
+        isNonEmptyStr(data.division, 60) &&
+        isNonEmptyStr(data.district, 60) &&
+        isOptStr(data, 'area', 120) &&
+        isNonEmptyStr(data.disasterType, 60) &&
+        data.familiesHelped is int && data.familiesHelped >= 0 &&
+        data.amountDistributed is number && data.amountDistributed >= 0 &&
+        isOptStr(data, 'distributedDate', 30) &&
+        data.lat is number && data.lat >= 20.0 && data.lat <= 27.0 &&
+        data.lng is number && data.lng >= 87.5 && data.lng <= 93.0 &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /relief_locations/{locationId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(locationId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(locationId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'title', 'division', 'district', 'disasterType', 'familiesHelped', 'amountDistributed', 'lat', 'lng', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'title', 'division', 'district', 'area', 'disasterType', 'familiesHelped', 'amountDistributed', 'distributedDate', 'lat', 'lng', 'createdAt', 'updatedAt']) &&
+        isValidReliefLocation(incoming());
+      allow update: if isValidId(locationId) && isSignedIn() &&
+        (existing().userId == request.auth.uid || isAdmin()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidReliefLocation(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['title', 'division', 'district', 'area', 'disasterType', 'familiesHelped', 'amountDistributed', 'distributedDate', 'lat', 'lng', 'updatedAt']);
+      allow delete: if isValidId(locationId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Field Reports ---
+    function isValidFieldReport(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.title, 200) &&
+        isNonEmptyStr(data.category, 60) &&
+        isOptStr(data, 'location', 120) &&
+        isOptStr(data, 'body', 2000) &&
+        data.spent is number && data.spent >= 0 &&
+        data.beneficiaries is int && data.beneficiaries >= 0 &&
+        data.status in ['pending', 'verified'] &&
+        isNonEmptyStr(data.authorName, 120) &&
+        isOptStr(data, 'proofUrl', 500) &&
+        isOptStr(data, 'videoUrl', 500) &&
+        data.reactionCount is int && data.reactionCount >= 0 &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /field_reports/{reportId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(reportId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(reportId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'title', 'category', 'spent', 'beneficiaries', 'status', 'authorName', 'reactionCount', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'title', 'category', 'location', 'body', 'spent', 'beneficiaries', 'status', 'authorName', 'proofUrl', 'videoUrl', 'reactionCount', 'createdAt', 'updatedAt']) &&
+        isValidFieldReport(incoming());
+      allow update: if isValidId(reportId) && isSignedIn() &&
+        isValidFieldReport(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          ((existing().userId == request.auth.uid || isAdmin()) &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'location', 'body', 'spent', 'beneficiaries', 'status', 'proofUrl', 'videoUrl', 'reactionCount', 'updatedAt'])) ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['reactionCount', 'updatedAt']) &&
+           incoming().reactionCount == existing().reactionCount + 1)
+        );
+      allow delete: if isValidId(reportId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Events ---
+    function isValidEvent(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.title, 200) &&
+        data.type in ['urgent', 'meeting', 'plan', 'field', 'other'] &&
+        data.eventDateMillis is int &&
+        isOptStr(data, 'location', 160) &&
+        isOptStr(data, 'description', 1000) &&
+        data.attendeeUids is list && data.attendeeUids.size() <= 100 && (data.attendeeUids.size() == 0 || data.attendeeUids[0] is string) &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /events/{eventId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(eventId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(eventId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'title', 'type', 'eventDateMillis', 'attendeeUids', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'title', 'type', 'eventDateMillis', 'location', 'description', 'attendeeUids', 'createdAt', 'updatedAt']) &&
+        isValidEvent(incoming());
+      allow update: if isValidId(eventId) && isSignedIn() &&
+        isValidEvent(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          ((existing().userId == request.auth.uid || isAdmin()) &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'type', 'eventDateMillis', 'location', 'description', 'attendeeUids', 'updatedAt'])) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['attendeeUids', 'updatedAt'])
+        );
+      allow delete: if isValidId(eventId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Notices ---
+    function isValidNotice(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.title, 200) &&
+        isNonEmptyStr(data.body, 2000) &&
+        data.urgent is bool &&
+        data.likeCount is int && data.likeCount >= 0 &&
+        data.supportCount is int && data.supportCount >= 0 &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /notices/{noticeId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(noticeId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(noticeId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'title', 'body', 'urgent', 'likeCount', 'supportCount', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'title', 'body', 'urgent', 'likeCount', 'supportCount', 'createdAt', 'updatedAt']) &&
+        isValidNotice(incoming());
+      allow update: if isValidId(noticeId) && isSignedIn() &&
+        isValidNotice(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          ((existing().userId == request.auth.uid || isAdmin()) &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'urgent', 'likeCount', 'supportCount', 'updatedAt'])) ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['likeCount', 'updatedAt']) &&
+           incoming().likeCount == existing().likeCount + 1) ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['supportCount', 'updatedAt']) &&
+           incoming().supportCount == existing().supportCount + 1)
+        );
+      allow delete: if isValidId(noticeId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Polls & Secret Votes ---
+    function isValidPoll(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.question, 300) &&
+        isOptStr(data, 'description', 600) &&
+        data.options is list && data.options.size() >= 2 && data.options.size() <= 6 && data.options[0] is string &&
+        data.voteCounts is list && data.voteCounts.size() == data.options.size() && data.voteCounts[0] is int &&
+        data.closed is bool &&
+        (!('closesAtMillis' in data) || data.closesAtMillis is int) &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    function isValidVote(data, pollId, voterId) {
+      return data.userId == voterId &&
+        data.pollId == pollId &&
+        data.optionIdx is int && data.optionIdx >= 0 && data.optionIdx < 6 &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /polls/{pollId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(pollId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(pollId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'question', 'options', 'voteCounts', 'closed', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'question', 'description', 'options', 'voteCounts', 'closed', 'closesAtMillis', 'createdAt', 'updatedAt']) &&
+        isValidPoll(incoming());
+      allow update: if isValidId(pollId) && isSignedIn() &&
+        isValidPoll(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          ((existing().userId == request.auth.uid || isAdmin()) &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['question', 'description', 'options', 'closed', 'closesAtMillis', 'updatedAt'])) ||
+          (existing().closed == false &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['voteCounts', 'updatedAt']) &&
+           existsAfter(/databases/$(database)/documents/polls/$(pollId)/votes/$(request.auth.uid)))
+        );
+      allow delete: if isValidId(pollId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+
+      match /votes/{voterId} {
+        allow list: if isOwner(voterId);
+        allow get: if isValidId(voterId) && isOwner(voterId);
+        allow create: if isValidId(voterId) && isOwner(voterId) &&
+          exists(/databases/$(database)/documents/polls/$(pollId)) &&
+          get(/databases/$(database)/documents/polls/$(pollId)).data.closed == false &&
+          incoming().keys().hasAll(['userId', 'pollId', 'optionIdx', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'pollId', 'optionIdx', 'createdAt', 'updatedAt']) &&
+          isValidVote(incoming(), pollId, voterId);
+        allow update: if isValidId(voterId) && isOwner(voterId) &&
+          get(/databases/$(database)/documents/polls/$(pollId)).data.closed == false &&
+          incoming().userId == existing().userId &&
+          incoming().pollId == existing().pollId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidVote(incoming(), pollId, voterId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['optionIdx', 'updatedAt']);
+        allow delete: if isValidId(voterId) && isOwner(voterId);
+      }
+    }
+
+    // --- Voices / Testimonials ---
+    function isValidVoice(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.name, 120) &&
+        isNonEmptyStr(data.label, 60) &&
+        data.rating is int && data.rating >= 1 && data.rating <= 5 &&
+        isNonEmptyStr(data.body, 500) &&
+        data.status in ['pending', 'approved', 'rejected'] &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /voices/{voiceId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(voiceId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(voiceId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'name', 'label', 'rating', 'body', 'status', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'name', 'label', 'rating', 'body', 'status', 'createdAt', 'updatedAt']) &&
+        isValidVoice(incoming());
+      allow update: if isValidId(voiceId) && isSignedIn() &&
+        (existing().userId == request.auth.uid || isAdmin()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidVoice(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'label', 'rating', 'body', 'status', 'updatedAt']);
+      allow delete: if isValidId(voiceId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Chat Messages ---
+    function isValidChatMessage(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.channel, 80) &&
+        isNonEmptyStr(data.senderName, 120) &&
+        isOptStr(data, 'senderRole', 60) &&
+        isNonEmptyStr(data.body, 2000) &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /chat_messages/{msgId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(msgId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(msgId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'channel', 'senderName', 'body', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'channel', 'senderName', 'senderRole', 'body', 'createdAt', 'updatedAt']) &&
+        isValidChatMessage(incoming());
+      allow update: if false;
+      allow delete: if isValidId(msgId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Volunteer Duties ---
+    function isValidDuty(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.visibility == 'foundation' &&
+        isNonEmptyStr(data.title, 200) &&
+        isOptStr(data, 'description', 1000) &&
+        isNonEmptyStr(data.assignedToName, 120) &&
+        isOptStr(data, 'dueOn', 30) &&
+        data.status in ['todo', 'doing', 'done'] &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /duties/{dutyId} {
+      allow list: if isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid);
+      allow get: if isValidId(dutyId) && isSignedIn() && (existing().visibility == 'foundation' || existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(dutyId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll(['userId', 'visibility', 'title', 'assignedToName', 'status', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'visibility', 'title', 'description', 'assignedToName', 'dueOn', 'status', 'createdAt', 'updatedAt']) &&
+        isValidDuty(incoming());
+      allow update: if isValidId(dutyId) && isSignedIn() &&
+        isValidDuty(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          ((existing().userId == request.auth.uid || isAdmin()) &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'assignedToName', 'dueOn', 'status', 'updatedAt'])) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+        );
+      allow delete: if isValidId(dutyId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // --- Private Public Requests (Aid, Contact, Membership Applications - PII Protected) ---
+    function isValidPublicRequest(data) {
+      return isNonEmptyStr(data.userId, 128) &&
+        data.kind in ['aid', 'contact', 'member_apply'] &&
+        isNonEmptyStr(data.name, 120) &&
+        isOptStr(data, 'phone', 40) &&
+        isOptStr(data, 'email', 160) &&
+        isOptStr(data, 'district', 60) &&
+        isOptStr(data, 'bloodGroup', 10) &&
+        isOptStr(data, 'aidType', 80) &&
+        (!('amountNeeded' in data) || (data.amountNeeded is number && data.amountNeeded >= 0)) &&
+        isOptStr(data, 'subject', 160) &&
+        isOptStr(data, 'details', 2000) &&
+        data.status in ['pending', 'approved', 'rejected'] &&
+        isValidTs(data.createdAt) && isValidTs(data.updatedAt);
+    }
+
+    match /public_requests/{reqId} {
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrapAdmin());
+      allow get: if isValidId(reqId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+      allow create: if isValidId(reqId) && isSignedIn() &&
+        incoming().userId == request.auth.uid &&
+        incoming().status == 'pending' &&
+        incoming().keys().hasAll(['userId', 'kind', 'name', 'status', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'kind', 'name', 'phone', 'email', 'district', 'bloodGroup', 'aidType', 'amountNeeded', 'subject', 'details', 'status', 'createdAt', 'updatedAt']) &&
+        isValidPublicRequest(incoming());
+      allow update: if isValidId(reqId) && isSignedIn() &&
+        (existing().userId == request.auth.uid || isAdmin()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidPublicRequest(incoming()) &&
+        (
+          isAdmin() ||
+          (incoming().status == existing().status &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'email', 'district', 'bloodGroup', 'aidType', 'amountNeeded', 'subject', 'details', 'updatedAt']))
+        );
+      allow delete: if isValidId(reqId) && isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+  }
+}

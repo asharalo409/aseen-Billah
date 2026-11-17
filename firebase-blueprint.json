@@ -1,0 +1,417 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile, linked member code, and theme preferences",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "memberCode": { "type": "string" },
+        "themePalette": { "type": "string" },
+        "themeBg": { "type": "string" },
+        "darkMode": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Must be FieldValue.serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Must be FieldValue.serverTimestamp()" }
+      },
+      "required": ["userId", "displayName", "role", "createdAt", "updatedAt"]
+    },
+    "SalatAmolLog": {
+      "title": "SalatAmolLog",
+      "description": "User daily Salat prayer and Amol completion tracker",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "prayers": { "type": "array" },
+        "amolDone": { "type": "array" },
+        "tasbihTotal": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "dateKey", "prayers", "amolDone", "tasbihTotal", "createdAt", "updatedAt"]
+    },
+    "AiChatSession": {
+      "title": "AiChatSession",
+      "description": "Manobseba AI conversation metadata",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "createdAt", "updatedAt"]
+    },
+    "AiChatMessage": {
+      "title": "AiChatMessage",
+      "description": "Single message inside an AI chat session",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "sender": { "type": "string", "enum": ["user", "assistant"] },
+        "text": { "type": "string" },
+        "actionType": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "sender", "text", "createdAt"]
+    },
+    "FoundationSettings": {
+      "title": "FoundationSettings",
+      "description": "Foundation configuration, goal target, and feature toggles",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "orgName": { "type": "string" },
+        "slogan": { "type": "string" },
+        "hotline": { "type": "string" },
+        "bankDetails": { "type": "string" },
+        "goalTitle": { "type": "string" },
+        "targetAmount": { "type": "number" },
+        "collectedAmount": { "type": "number" },
+        "monthlyFee": { "type": "number" },
+        "joinCode": { "type": "string" },
+        "disabledFeatures": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "orgName", "targetAmount", "createdAt", "updatedAt"]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "Foundation member and executive committee record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "fullName": { "type": "string" },
+        "phone": { "type": "string" },
+        "district": { "type": "string" },
+        "bloodGroup": { "type": "string" },
+        "role": { "type": "string" },
+        "roleLabel": { "type": "string" },
+        "rank": { "type": "integer" },
+        "memberCode": { "type": "string" },
+        "active": { "type": "boolean" },
+        "joinedDate": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "fullName", "role", "memberCode", "active", "createdAt", "updatedAt"]
+    },
+    "Fund": {
+      "title": "Fund",
+      "description": "Foundation sector/fund ledger",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "description": { "type": "string" },
+        "budget": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "name", "createdAt", "updatedAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Donation, expense, or monthly fee entry",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "kind": { "type": "string", "enum": ["donation", "expense", "fee"] },
+        "amount": { "type": "number" },
+        "fundId": { "type": "string" },
+        "memberId": { "type": "string" },
+        "donorName": { "type": "string" },
+        "method": { "type": "string" },
+        "receiptNo": { "type": "string" },
+        "voucherNo": { "type": "string" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "dateStr": { "type": "string" },
+        "year": { "type": "integer" },
+        "month": { "type": "integer" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "kind", "amount", "fundId", "dateStr", "createdAt", "updatedAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Foundation humanitarian project",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "area": { "type": "string" },
+        "description": { "type": "string" },
+        "goal": { "type": "number" },
+        "fundId": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "completed", "paused"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "title", "category", "goal", "fundId", "status", "createdAt", "updatedAt"]
+    },
+    "BloodRequest": {
+      "title": "BloodRequest",
+      "description": "Live 24-hour emergency blood request",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "bloodGroup": { "type": "string" },
+        "hospital": { "type": "string" },
+        "district": { "type": "string" },
+        "upazila": { "type": "string" },
+        "contact": { "type": "string" },
+        "patientProblem": { "type": "string" },
+        "neededByMillis": { "type": "integer" },
+        "urgent": { "type": "boolean" },
+        "applicantName": { "type": "string" },
+        "note": { "type": "string" },
+        "managed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "bloodGroup", "hospital", "contact", "patientProblem", "urgent", "applicantName", "managed", "createdAt", "updatedAt"]
+    },
+    "BloodDonor": {
+      "title": "BloodDonor",
+      "description": "Registered volunteer blood donor",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "fullName": { "type": "string" },
+        "bloodGroup": { "type": "string" },
+        "district": { "type": "string" },
+        "upazila": { "type": "string" },
+        "phone": { "type": "string" },
+        "whatsapp": { "type": "string" },
+        "available": { "type": "boolean" },
+        "totalDonations": { "type": "integer" },
+        "lastDonated": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "fullName", "bloodGroup", "district", "phone", "available", "totalDonations", "createdAt", "updatedAt"]
+    },
+    "ReliefLocation": {
+      "title": "ReliefLocation",
+      "description": "Bangladesh disaster relief camp location",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "title": { "type": "string" },
+        "division": { "type": "string" },
+        "district": { "type": "string" },
+        "area": { "type": "string" },
+        "disasterType": { "type": "string" },
+        "familiesHelped": { "type": "integer" },
+        "amountDistributed": { "type": "number" },
+        "distributedDate": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "title", "division", "district", "disasterType", "familiesHelped", "amountDistributed", "lat", "lng", "createdAt", "updatedAt"]
+    },
+    "FieldReport": {
+      "title": "FieldReport",
+      "description": "Verified field activity and proof report",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "location": { "type": "string" },
+        "body": { "type": "string" },
+        "spent": { "type": "number" },
+        "beneficiaries": { "type": "integer" },
+        "status": { "type": "string", "enum": ["pending", "verified"] },
+        "authorName": { "type": "string" },
+        "proofUrl": { "type": "string" },
+        "videoUrl": { "type": "string" },
+        "reactionCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "title", "category", "spent", "beneficiaries", "status", "authorName", "reactionCount", "createdAt", "updatedAt"]
+    },
+    "FoundationEvent": {
+      "title": "FoundationEvent",
+      "description": "Calendar event and volunteer RSVP tracking",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["urgent", "meeting", "plan", "field", "other"] },
+        "eventDateMillis": { "type": "integer" },
+        "location": { "type": "string" },
+        "description": { "type": "string" },
+        "attendeeUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "title", "type", "eventDateMillis", "attendeeUids", "createdAt", "updatedAt"]
+    },
+    "Notice": {
+      "title": "Notice",
+      "description": "Official foundation notice",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "urgent": { "type": "boolean" },
+        "likeCount": { "type": "integer" },
+        "supportCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "title", "body", "urgent", "likeCount", "supportCount", "createdAt", "updatedAt"]
+    },
+    "Poll": {
+      "title": "Poll",
+      "description": "Anonymous member voting poll",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "question": { "type": "string" },
+        "description": { "type": "string" },
+        "options": { "type": "array" },
+        "voteCounts": { "type": "array" },
+        "closed": { "type": "boolean" },
+        "closesAtMillis": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "question", "options", "voteCounts", "closed", "createdAt", "updatedAt"]
+    },
+    "PollVote": {
+      "title": "PollVote",
+      "description": "Private user vote record per poll",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "pollId": { "type": "string" },
+        "optionIdx": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "pollId", "optionIdx", "createdAt", "updatedAt"]
+    },
+    "VoiceTestimonial": {
+      "title": "VoiceTestimonial",
+      "description": "Donor and member testimonial",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "name": { "type": "string" },
+        "label": { "type": "string" },
+        "rating": { "type": "integer" },
+        "body": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "name", "label", "rating", "body", "status", "createdAt", "updatedAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Community and fund group chat message",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "channel": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderRole": { "type": "string" },
+        "body": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "channel", "senderName", "body", "createdAt", "updatedAt"]
+    },
+    "VolunteerDuty": {
+      "title": "VolunteerDuty",
+      "description": "Assigned volunteer duty and progress",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["foundation"] },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "assignedToName": { "type": "string" },
+        "dueOn": { "type": "string" },
+        "status": { "type": "string", "enum": ["todo", "doing", "done"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "visibility", "title", "assignedToName", "status", "createdAt", "updatedAt"]
+    },
+    "PublicRequest": {
+      "title": "PublicRequest",
+      "description": "Private aid, contact, and membership application submission",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "kind": { "type": "string", "enum": ["aid", "contact", "member_apply"] },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "district": { "type": "string" },
+        "bloodGroup": { "type": "string" },
+        "aidType": { "type": "string" },
+        "amountNeeded": { "type": "number" },
+        "subject": { "type": "string" },
+        "details": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "kind", "name", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": { "$ref": "#/entities/UserProfile" }, "description": "User profile & preferences" },
+    "/users/{userId}/salat_amol/{dayKey}": { "schema": { "$ref": "#/entities/SalatAmolLog" }, "description": "Daily Salat & Amol tracker" },
+    "/users/{userId}/ai_chats/{chatId}": { "schema": { "$ref": "#/entities/AiChatSession" }, "description": "AI chat session" },
+    "/users/{userId}/ai_chats/{chatId}/messages/{msgId}": { "schema": { "$ref": "#/entities/AiChatMessage" }, "description": "AI chat message" },
+    "/foundation_settings/{settingId}": { "schema": { "$ref": "#/entities/FoundationSettings" }, "description": "Foundation config" },
+    "/members/{memberId}": { "schema": { "$ref": "#/entities/Member" }, "description": "Members & Committee" },
+    "/funds/{fundId}": { "schema": { "$ref": "#/entities/Fund" }, "description": "Sectors/Funds" },
+    "/transactions/{txId}": { "schema": { "$ref": "#/entities/Transaction" }, "description": "Donations, expenses, and fees" },
+    "/projects/{projectId}": { "schema": { "$ref": "#/entities/Project" }, "description": "Active projects" },
+    "/blood_requests/{requestId}": { "schema": { "$ref": "#/entities/BloodRequest" }, "description": "Emergency blood requests" },
+    "/blood_donors/{donorId}": { "schema": { "$ref": "#/entities/BloodDonor" }, "description": "Blood donors" },
+    "/relief_locations/{locationId}": { "schema": { "$ref": "#/entities/ReliefLocation" }, "description": "Relief map pins" },
+    "/field_reports/{reportId}": { "schema": { "$ref": "#/entities/FieldReport" }, "description": "Verified field works" },
+    "/events/{eventId}": { "schema": { "$ref": "#/entities/FoundationEvent" }, "description": "Events & calendar" },
+    "/notices/{noticeId}": { "schema": { "$ref": "#/entities/Notice" }, "description": "Official notices" },
+    "/polls/{pollId}": { "schema": { "$ref": "#/entities/Poll" }, "description": "Member polls" },
+    "/polls/{pollId}/votes/{voterId}": { "schema": { "$ref": "#/entities/PollVote" }, "description": "Secret per-user vote" },
+    "/voices/{voiceId}": { "schema": { "$ref": "#/entities/VoiceTestimonial" }, "description": "Testimonials" },
+    "/chat_messages/{msgId}": { "schema": { "$ref": "#/entities/ChatMessage" }, "description": "Community & fund chat" },
+    "/duties/{dutyId}": { "schema": { "$ref": "#/entities/VolunteerDuty" }, "description": "Volunteer duties" },
+    "/public_requests/{reqId}": { "schema": { "$ref": "#/entities/PublicRequest" }, "description": "Private aid, contact, and membership applications" }
+  }
+}
