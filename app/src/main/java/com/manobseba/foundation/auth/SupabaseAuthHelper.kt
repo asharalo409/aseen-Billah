@@ -29,9 +29,23 @@ sealed interface SupabaseAuthResult {
 }
 
 object SupabaseAuthHelper {
-    fun baseUrl(): String = BuildConfig.VITE_SUPABASE_URL.trim().trimEnd('/')
+    fun baseUrl(): String {
+        var raw = BuildConfig.VITE_SUPABASE_URL.trim().trim('"', '\'')
+        if (raw.startsWith("VITE_SUPABASE_URL=")) raw = raw.removePrefix("VITE_SUPABASE_URL=").trim().trim('"', '\'')
+        if (raw.startsWith("SUPABASE_URL=")) raw = raw.removePrefix("SUPABASE_URL=").trim().trim('"', '\'')
+        raw = raw.trimEnd('/')
+        if (raw.isNotBlank() && !raw.endsWith("_PLACEHOLDER") && !raw.startsWith("http://") && !raw.startsWith("https://") && raw.contains(".")) {
+            raw = "https://$raw"
+        }
+        return raw
+    }
 
-    fun anonKey(): String = BuildConfig.VITE_SUPABASE_ANON_KEY.trim()
+    fun anonKey(): String {
+        var raw = BuildConfig.VITE_SUPABASE_ANON_KEY.trim().trim('"', '\'')
+        if (raw.startsWith("VITE_SUPABASE_ANON_KEY=")) raw = raw.removePrefix("VITE_SUPABASE_ANON_KEY=").trim().trim('"', '\'')
+        if (raw.startsWith("SUPABASE_ANON_KEY=")) raw = raw.removePrefix("SUPABASE_ANON_KEY=").trim().trim('"', '\'')
+        return raw
+    }
 
     fun isConfigured(): Boolean =
         baseUrl().startsWith("https://") &&

@@ -41,12 +41,24 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           if [ ! -f .env ]; then
-            CLEAN_URL="$(printf '%s' "$VITE_SUPABASE_URL" | tr -d ' \t\n\r')"
-            CLEAN_KEY="$(printf '%s' "$VITE_SUPABASE_ANON_KEY" | tr -d ' \t\n\r')"
+            RAW_URL="${VITE_SUPABASE_URL:-$SUPABASE_URL}"
+            RAW_KEY="${VITE_SUPABASE_ANON_KEY:-$SUPABASE_ANON_KEY}"
+            CLEAN_URL="$(printf '%s' "$RAW_URL" | tr -d ' \t\n\r"'\''')"
+            CLEAN_KEY="$(printf '%s' "$RAW_KEY" | tr -d ' \t\n\r"'\''')"
+            CLEAN_URL="${CLEAN_URL#VITE_SUPABASE_URL=}"
+            CLEAN_URL="${CLEAN_URL#SUPABASE_URL=}"
+            CLEAN_KEY="${CLEAN_KEY#VITE_SUPABASE_ANON_KEY=}"
+            CLEAN_KEY="${CLEAN_KEY#SUPABASE_ANON_KEY=}"
+
+            echo "Supabase URL present: $([ -n "$CLEAN_URL" ] && echo yes || echo no) (length=${#CLEAN_URL})"
+            echo "Supabase Anon Key present: $([ -n "$CLEAN_KEY" ] && echo yes || echo no) (length=${#CLEAN_KEY})"
+
             if [ -z "$CLEAN_URL" ] || [ -z "$CLEAN_KEY" ]; then
-              echo "::warning::VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY not set in GitHub Secrets; Live Vercel server mode will work, Native mode needs those secrets."
+              echo "::warning::VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY not set in GitHub Repository Secrets; Live Vercel server mode will work, Native mode needs those secrets."
             fi
             : > .env
             if [ -n "$CLEAN_URL" ]; then
