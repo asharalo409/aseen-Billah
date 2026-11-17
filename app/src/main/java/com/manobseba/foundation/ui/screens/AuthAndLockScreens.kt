@@ -84,7 +84,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun AuthScreen(
     onSignedInSuccess: (AppUser) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenVercelServer: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -348,6 +349,16 @@ fun AuthScreen(
                         modifier = Modifier.align(Alignment.End).testTag("forgot_password_button")
                     ) {
                         Text("পাসওয়ার্ড ভুলে গেছেন?")
+                    }
+                }
+                if (onOpenVercelServer != null) {
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = onOpenVercelServer,
+                        modifier = Modifier.fillMaxWidth().testTag("open_vercel_server_button"),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text("Vercel লাইভ সার্ভার থেকে চালান")
                     }
                 }
             }

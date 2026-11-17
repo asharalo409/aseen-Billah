@@ -71,7 +71,8 @@ private data class MenuShortcut(
 fun AllMenuScreen(
     vm: MainViewModel,
     onNavigate: (AppRoute) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenVercelServer: (() -> Unit)? = null
 ) {
     val members by vm.members.collectAsStateWithLifecycle()
     val projects by vm.projects.collectAsStateWithLifecycle()
@@ -102,6 +103,14 @@ fun AllMenuScreen(
         item {
             SectionHeader("সকল সেবা ও মেনু", "সার্চ করুন অথবা যেকোনো বিভাগ খুলুন")
             Spacer(Modifier.height(6.dp))
+            if (onOpenVercelServer != null) {
+                Button(
+                    onClick = onOpenVercelServer,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp).testTag("all_menu_vercel_btn")
+                ) {
+                    Text("Vercel লাইভ ওয়েব সার্ভার খুলুন")
+                }
+            }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },

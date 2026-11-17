@@ -95,7 +95,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _isLocked = MutableStateFlow(lockManager.isLockEnabled())
     val isLocked: StateFlow<Boolean> = _isLocked.asStateFlow()
 
-    // Live Firestore streams (populated only while authenticated)
+    private val _useVercelWebMode = MutableStateFlow(localPrefs.getBoolean("use_vercel_web_mode", true))
+    val useVercelWebMode: StateFlow<Boolean> = _useVercelWebMode.asStateFlow()
+
+    // Live Supabase streams (populated only while authenticated)
     private val _userProfile = MutableStateFlow<UserProfile?>(null)
     val userProfile: StateFlow<UserProfile?> = _userProfile.asStateFlow()
 
@@ -346,6 +349,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun lockNowIfEnabled() {
         if (lockManager.isLockEnabled()) _isLocked.value = true
+    }
+
+    fun setVercelWebMode(enabled: Boolean) {
+        _useVercelWebMode.value = enabled
+        localPrefs.edit().putBoolean("use_vercel_web_mode", enabled).apply()
     }
 
     fun setThemePreference(palette: String, bg: String, darkMode: Boolean) {

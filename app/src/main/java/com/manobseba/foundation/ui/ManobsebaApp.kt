@@ -81,6 +81,7 @@ fun ManobsebaApp(
     val userProfile by vm.userProfile.collectAsStateWithLifecycle()
     val toastMsg by vm.toastMessage.collectAsStateWithLifecycle()
     val isLocked by vm.isLocked.collectAsStateWithLifecycle()
+    val useVercelWebMode by vm.useVercelWebMode.collectAsStateWithLifecycle()
 
     val paletteKey = userProfile?.themePalette ?: "green"
     val bgMode = userProfile?.themeBg ?: "plain"
@@ -97,29 +98,39 @@ fun ManobsebaApp(
 
     ManobsebaTheme(paletteKey = paletteKey, darkTheme = darkTheme) {
         Box(modifier = Modifier.fillMaxSize()) {
-            when (authState) {
-                is AuthUiState.Loading -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
+            if (useVercelWebMode) {
+                com.manobseba.foundation.ui.screens.LiveVercelScreen(
+                    onSwitchToNative = { vm.setVercelWebMode(false) },
+                    onToast = { vm.showToast(it) }
+                )
+            } else {
+                when (authState) {
+                    is AuthUiState.Loading -> {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
                     }
-                }
-                is AuthUiState.SignedOut -> {
-                    AuthScreen(onSignedInSuccess = { user -> vm.onSignedIn(user) })
-                }
-                is AuthUiState.SignedIn -> {
-                    AuthenticatedShell(
-                        windowSizeClass = windowSizeClass,
-                        vm = vm,
-                        bgMode = bgMode,
-                        snackbarHostState = snackbarHostState
-                    )
-                    if (isLocked) {
-                        AppLockOverlay(
-                            lockManager = vm.lockManager,
-                            onUnlocked = { vm.unlockApp() }
+                    is AuthUiState.SignedOut -> {
+                        AuthScreen(
+                            onSignedInSuccess = { user -> vm.onSignedIn(user) },
+                            onOpenVercelServer = { vm.setVercelWebMode(true) }
+                        )
+                    }
+                    is AuthUiState.SignedIn -> {
+                        AuthenticatedShell(
+                            windowSizeClass = windowSizeClass,
+                            vm = vm,
+                            bgMode = bgMode,
+                            snackbarHostState = snackbarHostState
                         )
                     }
                 }
+            }
+            if (isLocked) {
+                AppLockOverlay(
+                    lockManager = vm.lockManager,
+                    onUnlocked = { vm.unlockApp() }
+                )
             }
         }
     }
@@ -238,7 +249,11 @@ private fun AuthenticatedShell(
                     composable<AppRoute.Community> { CommunityScreen(vm = vm) }
                     composable<AppRoute.Admin> { AdminScreen(vm = vm) }
                     composable<AppRoute.AllMenu> {
-                        AllMenuScreen(vm = vm, onNavigate = { route -> navigateTo(route) })
+                        AllMenuScreen(
+                            vm = vm,
+                            onNavigate = { route -> navigateTo(route) },
+                            onOpenVercelServer = { vm.setVercelWebMode(true) }
+                        )
                     }
                 }
             }
